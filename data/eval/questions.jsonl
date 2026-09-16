@@ -1,0 +1,10 @@
+{"question":"员工请假需要提前多久申请？","expected_text":"请假需要提前一天"}
+{"question":"年假申请的时间要求是什么？","expected_text":"年假申请也需要提前一天"}
+{"question":"请病假需要什么证明材料？","expected_text":"医院证明"}
+{"question":"报销没有发票怎么办？","expected_text":"发票丢失时"}
+{"question":"出差结束后最迟多久报销？","expected_text":"返回后七天内"}
+{"question":"报销申请需要哪些凭据？","expected_text":"发票和审批记录"}
+{"question":"系统密码最少需要多少位？","expected_text":"不得少于十二位"}
+{"question":"密码可以设置连续数字吗？","expected_text":"禁止使用生日、手机号或连续数字"}
+{"question":"发现账号被盗后应该怎么处理？","expected_text":"立即修改密码并通知管理员"}
+{"question":"账号被锁定后应该联系谁？","expected_text":"联系管理员解锁"}
