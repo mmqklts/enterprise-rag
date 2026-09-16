@@ -38,3 +38,12 @@ BGE Rerank
 DeepSeek 生成答案
         ↓
 答案 + 来源引用
+
+## Docker 部署
+
+确保已安装 Docker Desktop 和 WSL2。
+
+复制环境变量：
+
+```powershell
+Copy-Item .env.example .env

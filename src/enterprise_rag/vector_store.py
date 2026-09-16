@@ -10,8 +10,13 @@ class VectorStore:
         path: str | Path = "data/qdrant",
         collection_name: str = "knowledge_chunks",
         vector_size: int = 512,
+        url: str | None = None,
     ) -> None:
-        self.client = QdrantClient(path=str(path))
+        if url:
+            self.client = QdrantClient(url=url)
+        else:
+            self.client = QdrantClient(path=str(path))
+
         self.collection_name = collection_name
         self.vector_size = vector_size
         self._ensure_collection()

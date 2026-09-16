@@ -24,6 +24,11 @@ from pathlib import Path
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1)
     limit: int = Field(default=5, ge=1, le=20)
@@ -50,6 +55,10 @@ def get_embedder() -> TextEmbedder:
 
 @lru_cache
 def get_vector_store() -> VectorStore:
+    qdrant_url = os.getenv("QDRANT_URL")
+    if qdrant_url:
+        return VectorStore(url=qdrant_url)
+
     return VectorStore()
 
 
