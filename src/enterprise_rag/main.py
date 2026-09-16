@@ -1,31 +1,23 @@
+import os
 from functools import lru_cache
+from hashlib import sha256
+from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from enterprise_rag.bm25_retriever import BM25Retriever
 from enterprise_rag.embedder import TextEmbedder
+from enterprise_rag.hybrid_retriever import HybridRetriever
 from enterprise_rag.ingestion import DocumentIngestionService, IngestionResult
 from enterprise_rag.llm_client import DeepSeekClient
 from enterprise_rag.rag import RagResponse, RagService
-from enterprise_rag.vector_store import VectorStore
-from enterprise_rag.bm25_retriever import BM25Retriever
-from enterprise_rag.hybrid_retriever import HybridRetriever
 from enterprise_rag.reranker import Reranker
-
-from functools import lru_cache
-from pathlib import Path
-
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from pydantic import BaseModel, Field
-
-from hashlib import sha256
-from pathlib import Path
-
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-
-import os
-from dotenv import load_dotenv
+from enterprise_rag.vector_store import VectorStore
 
 load_dotenv()
 
@@ -114,7 +106,7 @@ def chat(request: ChatRequest) -> RagResponse:
 
 @app.post("/documents/upload", response_model=IngestionResult)
 async def upload_document(
-    file: UploadFile = File(...),
+    file: Annotated[UploadFile, File()],
 ) -> IngestionResult:
     filename = file.filename or ""
     suffix = Path(filename).suffix.lower()

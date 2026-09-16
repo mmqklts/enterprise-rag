@@ -22,7 +22,7 @@ services:
       RERANKER_MODEL_PATH: /models/bge-reranker-base
     volumes:
       - "./data/uploads:/app/data/uploads"
-      - "D:/xiangmu/models:/models:ro"
+      - "${MODEL_DIR:-./models}:/models:ro"
     depends_on:
       - qdrant
 
