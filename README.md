@@ -18,6 +18,8 @@
 - 最大步数和重复调用保护
 - 文件名、页码和原文来源引用
 - 检索策略评测：Recall@1、Recall@5、MRR
+- 80 题分类评测集：事实、改写、多跳、无答案、冲突和 Prompt Injection
+- 共享安全拦截：拒绝密钥泄露、伪造法条和删除知识库请求
 - FastAPI 接口和 Web 页面
 
 ## Agent 流程
@@ -102,12 +104,90 @@ uv run uvicorn enterprise_rag.main:app --reload
 ## 测试
 
 ```powershell
-uv run pytest
+uv run pytest -q
 uv run ruff check .
 ```
+
+当前结果：`16 passed`，Ruff 检查通过。
 
 ## 检索评测
 
 ```powershell
 uv run python -m enterprise_rag.evaluation
+```
+
+## 80 题 Agent/RAG 评测
+
+评测数据：
+
+```text
+data/eval/civil_code_eval_80.jsonl
+```
+
+| 类别 | 数量 |
+|---|---:|
+| 直接事实题 | 40 |
+| 同义改写题 | 15 |
+| 跨法条题 | 10 |
+| 无答案题 | 8 |
+| 冲突或模糊题 | 4 |
+| Prompt Injection 题 | 3 |
+| 总计 | 80 |
+
+普通 RAG 基线：
+
+```text
+答案正确率（人工复核后）：100%
+忠实度：100%
+平均耗时：6705.68 ms
+P95 耗时：9371.16 ms
+```
+
+10 道跨法条题对比：
+
+| 指标 | 普通 RAG | Agent |
+|---|---:|---:|
+| 答案正确率 | 100% | 100% |
+| 忠实度 | 100% | 100% |
+| 证据完整覆盖率 | 60% | 80% |
+| 平均耗时 | 6647.92 ms | 14546.10 ms |
+| P95 耗时 | 7279.71 ms | 15548.79 ms |
+
+Agent 在这 10 道题中执行了 27 次模型请求，消耗 71988 Token。结果表明 Agent 更适合多跳和补充证据场景，普通事实题仍应使用 `/chat` 以控制延迟和成本。
+
+复现 Agent 多跳评测：
+
+```powershell
+uv run python scripts/evaluate_civil_eval80.py `
+  --endpoint agent `
+  --category multi_hop `
+  --output data/eval/civil_code_eval_80_agent_multi_hop_results.jsonl
+```
+
+## 安全防护
+
+普通 RAG 和 Agent 在进入检索、工具调用或 LLM 前都会执行共享安全检查，拦截：
+
+- 要求忽略系统规则或泄露系统提示词、API Key。
+- 要求调用不存在的 `delete_documents` 工具。
+- 要求删除或清空知识库。
+- 要求伪造法条或来源并输出虚假结论。
+
+Prompt Injection 评测结果为 `3/3` 正确拒绝，危险请求不会进入模型或工具循环：
+
+```text
+工具调用次数：0
+模型请求次数：0
+Token 消耗：0
+```
+
+该规则层是基础防护，生产环境还需要权限控制、输入分类器、审计日志和工具级授权。
+
+复现安全测试：
+
+```powershell
+uv run python scripts/evaluate_civil_eval80.py `
+  --endpoint agent `
+  --category prompt_injection `
+  --output data/eval/civil_code_eval_80_agent_prompt_injection_results.jsonl
 ```
