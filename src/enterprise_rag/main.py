@@ -1,8 +1,9 @@
+import logging
 import os
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -10,6 +11,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from enterprise_rag.agent import KnowledgeAgent
+from enterprise_rag.agent_model import DeepSeekAgentModel
 from enterprise_rag.bm25_retriever import BM25Retriever
 from enterprise_rag.embedder import TextEmbedder
 from enterprise_rag.hybrid_retriever import HybridRetriever
@@ -21,15 +24,58 @@ from enterprise_rag.vector_store import VectorStore
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
+
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1)
     limit: int = Field(default=5, ge=1, le=20)
+
+
+class AgentSourceResponse(BaseModel):
+    index: int
+    document_id: str
+    filename: str
+    text: str
+    page: int | None
+    score: float
+    rrf_score: float
+    vector_rank: int | None
+    bm25_rank: int | None
+    rerank_score: float | None
+
+
+class AgentStepResponse(BaseModel):
+    step: int
+    tool: str
+    arguments: dict[str, Any]
+    status: str
+    summary: str
+    duration_ms: float
+
+
+class AgentUsageResponse(BaseModel):
+    request_count: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+class AgentChatResponse(BaseModel):
+    answer: str
+    sources: list[AgentSourceResponse]
+    trace: list[AgentStepResponse]
+    usage: AgentUsageResponse
+    stop_reason: str
+    citation_status: str
+    duration_ms: float
+
 
 UPLOAD_DIR = Path("data/uploads")
 MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 ALLOWED_SUFFIXES = {".pdf", ".md", ".markdown", ".txt"}
 
-app = FastAPI(title="Enterprise RAG API")
+app = FastAPI(title="Enterprise Knowledge Agent API")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = PROJECT_ROOT / "static"
 
@@ -39,6 +85,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
 
 @lru_cache
 def get_embedder() -> TextEmbedder:
@@ -75,6 +122,7 @@ def get_ingestion_service() -> DocumentIngestionService:
         vector_store=get_vector_store(),
     )
 
+
 @lru_cache
 def get_bm25_retriever() -> BM25Retriever:
     return BM25Retriever(get_vector_store())
@@ -87,9 +135,25 @@ def get_hybrid_retriever() -> HybridRetriever:
         vector_store=get_vector_store(),
         bm25_retriever=get_bm25_retriever(),
     )
+
+
 @lru_cache
 def get_reranker() -> Reranker:
     return Reranker()
+
+
+@lru_cache
+def get_agent() -> KnowledgeAgent:
+    configured_steps = int(os.getenv("AGENT_MAX_STEPS", "6"))
+
+    return KnowledgeAgent(
+        retriever=get_hybrid_retriever(),
+        reranker=get_reranker(),
+        vector_store=get_vector_store(),
+        model=DeepSeekAgentModel(),
+        max_steps=max(1, min(configured_steps, 12)),
+    )
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -103,6 +167,61 @@ def chat(request: ChatRequest) -> RagResponse:
         question=request.question,
         limit=request.limit,
     )
+
+
+@app.post("/agent/chat", response_model=AgentChatResponse)
+def agent_chat(request: ChatRequest) -> AgentChatResponse:
+    try:
+        result = get_agent().run(
+            question=request.question,
+            limit=request.limit,
+        )
+    except Exception as exc:
+        logger.exception("agent_request_failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Agent 暂时不可用，请检查模型配置或查看服务日志。",
+        ) from exc
+
+    return AgentChatResponse(
+        answer=result.answer,
+        sources=[
+            AgentSourceResponse(
+                index=source.index,
+                document_id=source.document_id,
+                filename=source.filename,
+                text=source.text,
+                page=source.page,
+                score=source.score,
+                rrf_score=source.rrf_score,
+                vector_rank=source.vector_rank,
+                bm25_rank=source.bm25_rank,
+                rerank_score=source.rerank_score,
+            )
+            for source in result.sources
+        ],
+        trace=[
+            AgentStepResponse(
+                step=step.step,
+                tool=step.tool,
+                arguments=step.arguments,
+                status=step.status,
+                summary=step.summary,
+                duration_ms=step.duration_ms,
+            )
+            for step in result.trace
+        ],
+        usage=AgentUsageResponse(
+            request_count=result.usage.request_count,
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            total_tokens=result.usage.total_tokens,
+        ),
+        stop_reason=result.stop_reason,
+        citation_status=result.citation_status,
+        duration_ms=result.duration_ms,
+    )
+
 
 @app.post("/documents/upload", response_model=IngestionResult)
 async def upload_document(

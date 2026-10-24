@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 
 from enterprise_rag.hybrid_retriever import HybridRetriever
@@ -20,9 +21,23 @@ class Source:
 
 
 @dataclass
+class RagMetrics:
+    retrieval_ms: float
+    rerank_ms: float
+    llm_ms: float
+    total_ms: float
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cache_hit_tokens: int
+    cache_miss_tokens: int
+
+
+@dataclass
 class RagResponse:
     answer: str
     sources: list[Source]
+    metrics: RagMetrics
 
 
 class RagService:
@@ -37,17 +52,40 @@ class RagService:
         self.llm = llm
 
     def answer(self, question: str, limit: int = 5) -> RagResponse:
+        started_at = time.perf_counter()
+
+        retrieval_started_at = time.perf_counter()
         results = self.retriever.search(
-            question, 
+            question,
             limit=max(limit * 4, 10),
         )
+        retrieval_ms = (time.perf_counter() - retrieval_started_at) * 1000
+
+        rerank_started_at = time.perf_counter()
         results = self.reranker.rerank(
             question,
             results,
             limit=limit,
         )
+        rerank_ms = (time.perf_counter() - rerank_started_at) * 1000
+
         if not results:
-            return RagResponse(answer="知识库中没有找到相关内容。", sources=[])
+            total_ms = (time.perf_counter() - started_at) * 1000
+            return RagResponse(
+                answer="知识库中没有找到相关内容。",
+                sources=[],
+                metrics=RagMetrics(
+                    retrieval_ms=retrieval_ms,
+                    rerank_ms=rerank_ms,
+                    llm_ms=0,
+                    total_ms=total_ms,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    cache_hit_tokens=0,
+                    cache_miss_tokens=0,
+                ),
+            )
 
         sources: list[Source] = []
         context_parts: list[str] = []
@@ -59,6 +97,7 @@ class RagService:
             text = str(payload.get("text", ""))
             raw_page = payload.get("page")
             page = raw_page if isinstance(raw_page, int) else None
+
             sources.append(
                 Source(
                     index=index,
@@ -93,5 +132,23 @@ class RagService:
 用户问题：{question}
 """
 
-        answer = self.llm.generate(prompt)
-        return RagResponse(answer=answer, sources=sources)
+        llm_started_at = time.perf_counter()
+        llm_result = self.llm.generate(prompt)
+        llm_ms = (time.perf_counter() - llm_started_at) * 1000
+        total_ms = (time.perf_counter() - started_at) * 1000
+
+        return RagResponse(
+            answer=llm_result.content,
+            sources=sources,
+            metrics=RagMetrics(
+                retrieval_ms=retrieval_ms,
+                rerank_ms=rerank_ms,
+                llm_ms=llm_ms,
+                total_ms=total_ms,
+                prompt_tokens=llm_result.prompt_tokens,
+                completion_tokens=llm_result.completion_tokens,
+                total_tokens=llm_result.total_tokens,
+                cache_hit_tokens=llm_result.cache_hit_tokens,
+                cache_miss_tokens=llm_result.cache_miss_tokens,
+            ),
+        )

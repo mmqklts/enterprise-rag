@@ -23,7 +23,13 @@ class Reranker:
         if not configured_path:
             raise RuntimeError("RERANKER_MODEL_PATH 未配置")
 
-        self.model = CrossEncoder(str(configured_path))
+        resolved_path = Path(configured_path).expanduser()
+        if not resolved_path.exists():
+            raise RuntimeError(
+                f"RERANKER_MODEL_PATH 不存在：{resolved_path.resolve()}"
+            )
+
+        self.model = CrossEncoder(str(resolved_path.resolve()))
 
     def rerank(
         self,

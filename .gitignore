@@ -13,3 +13,8 @@ wheels/
 !.env.example
 data/qdrant/
 data/uploads/
+models/
+
+# Local service logs
+/agent_server.log
+/agent_server.err.log

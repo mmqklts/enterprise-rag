@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>企业智能知识库</title>
+  <title>企业知识 Agent</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -63,7 +63,85 @@
       padding: 14px;
       border-left: 4px solid #0b7285;
       background: #f0fbfc;
-      white-space: pre-wrap;
+      line-height: 1.7;
+    }
+    .answer h2, .answer h3, .answer h4 {
+      margin: 18px 0 8px;
+      line-height: 1.35;
+    }
+    .answer h2 { font-size: 20px; }
+    .answer h3 { font-size: 17px; }
+    .answer h4 { font-size: 15px; }
+    .answer p { margin: 0 0 12px; }
+    .answer ul, .answer ol {
+      margin: 8px 0 14px;
+      padding-left: 24px;
+    }
+    .answer li { margin: 4px 0; }
+    .answer code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #e6f2f4;
+      font-family: Consolas, monospace;
+      font-size: 0.92em;
+    }
+    .answer table {
+      width: 100%;
+      margin: 12px 0 16px;
+      border-collapse: collapse;
+      background: #fff;
+      font-size: 14px;
+    }
+    .answer th, .answer td {
+      padding: 8px 10px;
+      border: 1px solid #cbd5df;
+      text-align: left;
+      vertical-align: top;
+    }
+    .answer th { background: #eaf4f5; }
+    .citation {
+      color: #086f83;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .citation:hover { text-decoration: underline; }
+    .trace {
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .trace-item {
+      padding: 10px 12px;
+      border: 1px solid #d9e2ec;
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+    .trace-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .trace-summary {
+      margin-top: 5px;
+      color: #52606d;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .trace-meta {
+      margin-top: 5px;
+      color: #7b8794;
+      font-size: 12px;
+    }
+    .trace-status {
+      color: #0b7285;
+      font-weight: 400;
+    }
+    .citation-warning {
+      margin-top: 10px;
+      color: #9a6700;
+      font-size: 13px;
     }
     .source { padding: 12px 0; border-top: 1px solid #e5e7eb; }
     .source-title { font-weight: 700; margin-bottom: 6px; }
@@ -75,8 +153,8 @@
 </head>
 <body>
   <header>
-    <h1>企业智能知识库</h1>
-    <p>上传企业文档，基于检索结果获取带来源的答案。</p>
+    <h1>企业知识 Agent</h1>
+    <p>Agent 会拆分问题、调用检索工具、读取原文并给出带来源的答案。</p>
   </header>
 
   <main>
@@ -88,10 +166,11 @@
     </section>
 
     <section>
-      <h2>知识库问答</h2>
-      <textarea id="question" placeholder="请输入问题"></textarea>
-      <button id="chat-button">提交问题</button>
+      <h2>Agent 问答</h2>
+      <textarea id="question" placeholder="例如：对比两份制度中关于报销流程的差异"></textarea>
+      <button id="chat-button">交给 Agent</button>
       <div id="chat-status" class="status"></div>
+      <div id="trace" class="trace"></div>
       <div id="answer" class="answer" hidden></div>
       <div id="sources"></div>
     </section>
@@ -104,13 +183,214 @@
     const chatButton = document.querySelector("#chat-button");
     const questionInput = document.querySelector("#question");
     const chatStatus = document.querySelector("#chat-status");
+    const traceBox = document.querySelector("#trace");
     const answerBox = document.querySelector("#answer");
     const sourcesBox = document.querySelector("#sources");
+    const toolLabels = {
+      search_knowledge_base: "检索知识库",
+      read_source_chunk: "读取原文",
+      list_documents: "查看文档列表",
+    };
+
+    function appendInline(parent, text) {
+      const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[\d+\])/g;
+      let cursor = 0;
+
+      for (const match of text.matchAll(pattern)) {
+        if (match.index > cursor) {
+          parent.append(document.createTextNode(text.slice(cursor, match.index)));
+        }
+
+        const token = match[0];
+        if (token.startsWith("**")) {
+          const strong = document.createElement("strong");
+          strong.textContent = token.slice(2, -2);
+          parent.append(strong);
+        } else if (token.startsWith("`")) {
+          const code = document.createElement("code");
+          code.textContent = token.slice(1, -1);
+          parent.append(code);
+        } else {
+          const citation = document.createElement("a");
+          const sourceId = token.slice(1, -1);
+          citation.className = "citation";
+          citation.href = `#source-${sourceId}`;
+          citation.textContent = token;
+          parent.append(citation);
+        }
+
+        cursor = match.index + token.length;
+      }
+
+      if (cursor < text.length) {
+        parent.append(document.createTextNode(text.slice(cursor)));
+      }
+    }
+
+    function parseTableRow(line) {
+      return line
+        .trim()
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .split("|")
+        .map((cell) => cell.trim());
+    }
+
+    function isTableSeparator(line) {
+      if (!line.includes("|")) {
+        return false;
+      }
+      const cells = parseTableRow(line);
+      return cells.length > 0 && cells.every(
+        (cell) => /^:?-{3,}:?$/.test(cell.replace(/\s/g, "")),
+      );
+    }
+
+    function renderMarkdown(text) {
+      const fragment = document.createDocumentFragment();
+      const lines = text.replace(/\r/g, "").split("\n");
+      let paragraphLines = [];
+      let index = 0;
+
+      function flushParagraph() {
+        if (paragraphLines.length === 0) {
+          return;
+        }
+
+        const paragraph = document.createElement("p");
+        paragraphLines.forEach((line, lineIndex) => {
+          if (lineIndex > 0) {
+            paragraph.append(document.createElement("br"));
+          }
+          appendInline(paragraph, line);
+        });
+        fragment.append(paragraph);
+        paragraphLines = [];
+      }
+
+      while (index < lines.length) {
+        const line = lines[index].trim();
+
+        if (!line) {
+          flushParagraph();
+          index += 1;
+          continue;
+        }
+
+        const heading = line.match(/^(#{1,4})\s+(.+)$/);
+        if (heading) {
+          flushParagraph();
+          const level = Math.min(heading[1].length + 1, 4);
+          const element = document.createElement(`h${level}`);
+          appendInline(element, heading[2]);
+          fragment.append(element);
+          index += 1;
+          continue;
+        }
+
+        if (
+          line.includes("|") &&
+          index + 1 < lines.length &&
+          isTableSeparator(lines[index + 1])
+        ) {
+          flushParagraph();
+          const table = document.createElement("table");
+          const thead = document.createElement("thead");
+          const headerRow = document.createElement("tr");
+
+          parseTableRow(line).forEach((cell) => {
+            const th = document.createElement("th");
+            appendInline(th, cell);
+            headerRow.append(th);
+          });
+          thead.append(headerRow);
+
+          const tbody = document.createElement("tbody");
+          index += 2;
+
+          while (
+            index < lines.length &&
+            lines[index].trim().includes("|")
+          ) {
+            const bodyRow = document.createElement("tr");
+            parseTableRow(lines[index]).forEach((cell) => {
+              const td = document.createElement("td");
+              appendInline(td, cell);
+              bodyRow.append(td);
+            });
+            tbody.append(bodyRow);
+            index += 1;
+          }
+
+          table.append(thead, tbody);
+          fragment.append(table);
+          continue;
+        }
+
+        const unordered = line.match(/^[-*]\s+(.+)$/);
+        if (unordered) {
+          flushParagraph();
+          const list = document.createElement("ul");
+
+          while (index < lines.length) {
+            const itemMatch = lines[index].trim().match(/^[-*]\s+(.+)$/);
+            if (!itemMatch) {
+              break;
+            }
+            const item = document.createElement("li");
+            appendInline(item, itemMatch[1]);
+            list.append(item);
+            index += 1;
+          }
+
+          fragment.append(list);
+          continue;
+        }
+
+        const ordered = line.match(/^\d+\.\s+(.+)$/);
+        if (ordered) {
+          flushParagraph();
+          const list = document.createElement("ol");
+
+          while (index < lines.length) {
+            const itemMatch = lines[index].trim().match(/^\d+\.\s+(.+)$/);
+            if (!itemMatch) {
+              break;
+            }
+            const item = document.createElement("li");
+            appendInline(item, itemMatch[1]);
+            list.append(item);
+            index += 1;
+          }
+
+          fragment.append(list);
+          continue;
+        }
+
+        paragraphLines.push(line);
+        index += 1;
+      }
+
+      flushParagraph();
+      return fragment;
+    }
 
     async function readResponse(response) {
-      const data = await response.json();
+      const contentType = response.headers.get("content-type") || "";
+      let data;
+
+      if (contentType.includes("application/json")) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+
       if (!response.ok) {
-        throw new Error(JSON.stringify(data.detail));
+        const detail = typeof data.detail === "string"
+          ? data.detail
+          : JSON.stringify(data.detail);
+        throw new Error(detail || `HTTP ${response.status}`);
       }
       return data;
     }
@@ -155,11 +435,13 @@
 
       chatButton.disabled = true;
       chatStatus.className = "status";
-      chatStatus.textContent = "正在检索并生成答案...";
+      chatStatus.textContent = "Agent 正在规划并调用工具...";
+      answerBox.hidden = true;
+      traceBox.replaceChildren();
       sourcesBox.replaceChildren();
 
       try {
-        const response = await fetch("/chat", {
+        const response = await fetch("/agent/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ question, limit: 5 }),
@@ -167,17 +449,57 @@
         const data = await readResponse(response);
 
         answerBox.hidden = false;
-        answerBox.textContent = data.answer;
-        chatStatus.textContent = `找到 ${data.sources.length} 条来源`;
+        answerBox.replaceChildren(renderMarkdown(data.answer));
+        chatStatus.textContent =
+          `执行 ${data.trace.length} 步，耗时 ${Math.round(data.duration_ms)} ms，` +
+          `找到 ${data.sources.length} 条引用来源`;
+
+        data.trace.forEach((step) => {
+          const item = document.createElement("div");
+          item.className = "trace-item";
+
+          const head = document.createElement("div");
+          head.className = "trace-head";
+
+          const tool = document.createElement("span");
+          tool.textContent =
+            `${step.step}. ${toolLabels[step.tool] || step.tool}`;
+
+          const status = document.createElement("span");
+          status.className = "trace-status";
+          status.textContent = step.status === "ok" ? "完成" : step.status;
+
+          const summary = document.createElement("div");
+          summary.className = "trace-summary";
+          summary.textContent = step.summary;
+
+          const meta = document.createElement("div");
+          meta.className = "trace-meta";
+          meta.textContent =
+            `${Math.round(step.duration_ms)} ms · ${JSON.stringify(step.arguments)}`;
+
+          head.append(tool, status);
+          item.append(head, summary, meta);
+          traceBox.append(item);
+        });
+
+        if (data.citation_status !== "ok") {
+          const warning = document.createElement("div");
+          warning.className = "citation-warning";
+          warning.textContent = "答案引用校验未完全通过，请人工核对来源。";
+          traceBox.append(warning);
+        }
 
         data.sources.forEach((source) => {
           const item = document.createElement("div");
           item.className = "source";
+          item.id = `source-${source.index}`;
 
           const title = document.createElement("div");
           title.className = "source-title";
+          const pageLabel = source.page === null ? "" : `，第 ${source.page} 页`;
           title.textContent =
-            `[${source.index}] ${source.filename}，第 ${source.page} 页，分数 ${source.score.toFixed(4)}`;
+            `[${source.index}] ${source.filename}${pageLabel}，分数 ${Number(source.score).toFixed(4)}`;
 
           const text = document.createElement("div");
           text.className = "source-text";
