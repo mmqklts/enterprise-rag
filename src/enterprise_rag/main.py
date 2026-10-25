@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from enterprise_rag.agent import KnowledgeAgent
 from enterprise_rag.agent_model import DeepSeekAgentModel
+from enterprise_rag.auth_routes import router as auth_router
 from enterprise_rag.bm25_retriever import BM25Retriever
 from enterprise_rag.embedder import TextEmbedder
 from enterprise_rag.hybrid_retriever import HybridRetriever
@@ -77,6 +78,7 @@ MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 ALLOWED_SUFFIXES = {".pdf", ".md", ".markdown", ".txt"}
 
 app = FastAPI(title="Enterprise Knowledge Agent API")
+app.include_router(auth_router)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = PROJECT_ROOT / "static"
 

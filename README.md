@@ -22,6 +22,9 @@
 - 80 题分类评测集：事实、改写、多跳、无答案、冲突和 Prompt Injection
 - 共享安全拦截：拒绝密钥泄露、伪造法条和删除知识库请求
 - `knowledge_base_id` 贯穿入库、向量检索、BM25 和 Agent 工具调用
+- PostgreSQL 用户、知识库和成员角色数据模型
+- Alembic 数据库迁移
+- scrypt 密码哈希与 HS256 JWT 身份认证
 - FastAPI 接口和 Web 页面
 
 ## Agent 流程
@@ -111,7 +114,39 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-当前结果：`30 passed`，Ruff 检查通过。
+当前结果：`33 passed`，Ruff 检查通过。
+
+## 权限数据模型
+
+项目使用 PostgreSQL 保存用户和知识库权限元数据，启动数据库：
+
+```powershell
+docker compose up -d postgres
+```
+
+执行迁移：
+
+```powershell
+uv run alembic upgrade head
+```
+
+当前表：
+
+```text
+users                    用户账号和密码哈希
+knowledge_bases          知识库及所有者
+knowledge_base_members   知识库成员及角色
+```
+
+成员角色约束：
+
+```text
+owner    管理知识库和成员
+editor   上传和更新文档
+viewer   只读查询
+```
+
+数据库连接从 `DATABASE_URL` 读取。Docker Compose 会把应用连接到 `postgres` 服务，本地执行迁移时使用 `.env` 中的地址。
 
 ## 知识库隔离
 
@@ -133,6 +168,36 @@ other-kb -> 返回 0 条来源
 ```
 
 当前默认值只用于兼容现有页面。正式用户系统接入后，`knowledge_base_id` 必须由服务端根据登录用户和知识库成员关系确定，不能信任前端任意传入的值。
+
+当前阶段只完成数据库模型和迁移，尚未实现注册、登录、JWT 签发以及接口级成员权限检查。
+
+## 身份认证
+
+已提供以下接口：
+
+```text
+POST /auth/register  注册用户并创建默认知识库
+POST /auth/login     用户名密码登录并签发 JWT
+GET  /auth/me        使用 Bearer Token 获取当前用户和知识库角色
+```
+
+密码使用 Python 标准库 `scrypt` 加盐哈希，不保存明文密码。JWT 使用 HS256 签名，并提供过期时间。
+
+环境变量：
+
+```dotenv
+JWT_SECRET_KEY=replace_with_a_long_random_secret
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+```
+
+注册后系统会自动创建：
+
+```text
+knowledge_bases          默认知识库
+knowledge_base_members   owner 成员关系
+```
+
+当前 `/chat`、`/agent/chat` 和 `/documents/upload` 尚未强制要求 Bearer Token。下一步会把 `knowledge_base_id` 从客户端参数改为根据 Token 用户名和成员关系由服务端解析，并校验 owner/editor/viewer 权限。
 
 ## 检索评测
 
