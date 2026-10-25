@@ -5,7 +5,8 @@
 ## 功能
 
 - PDF、Markdown、TXT 文档解析
-- 文本切分与重叠窗口
+- 文档结构自动检测与分层切分
+- 法条、标题、Embedding 语义和固定滑窗四种 Chunking 策略
 - 本地 BGE 中文 Embedding
 - Qdrant 向量存储与相似度检索
 - BM25 与向量检索混合召回
@@ -108,7 +109,7 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-当前结果：`16 passed`，Ruff 检查通过。
+当前结果：`29 passed`，Ruff 检查通过。
 
 ## 检索评测
 
@@ -134,7 +135,7 @@ data/eval/civil_code_eval_80.jsonl
 | Prompt Injection 题 | 3 |
 | 总计 | 80 |
 
-普通 RAG 基线：
+固定字符切分下的普通 RAG 基线：
 
 ```text
 答案正确率（人工复核后）：100%
@@ -143,7 +144,7 @@ data/eval/civil_code_eval_80.jsonl
 P95 耗时：9371.16 ms
 ```
 
-10 道跨法条题对比：
+固定字符切分下，10 道跨法条题对比：
 
 | 指标 | 普通 RAG | Agent |
 |---|---:|---:|
@@ -154,6 +155,30 @@ P95 耗时：9371.16 ms
 | P95 耗时 | 7279.71 ms | 15548.79 ms |
 
 Agent 在这 10 道题中执行了 27 次模型请求，消耗 71988 Token。结果表明 Agent 更适合多跳和补充证据场景，普通事实题仍应使用 `/chat` 以控制延迟和成本。
+
+## 自动结构切分对比
+
+民法典 PDF 自动识别为 `article` 结构，置信度 `0.85`，从 206 页中提取 1260 条连续法条。结构化入库耗时约 24.95 秒，Qdrant 中该文档只保留 1260 个 `article` chunks。
+
+同一套 80 题的检索证据覆盖对比：
+
+| 类别 | 固定字符切分 | 法条结构切分 |
+|---|---:|---:|
+| 直接事实题 | 97.5% | 100% |
+| 同义改写题 | 93.3% | 100% |
+| 跨法条题 | 60% | 40% |
+
+结构切分显著改善了单法条事实题和同义改写题，但跨法条题需要多个来源，仅靠扩大单条法条 Chunk 不能解决。该类别应优先路由到 Agent，通过多次检索和原文读取补充证据。
+
+自动切分入口：
+
+```text
+src/enterprise_rag/article_chunker.py
+src/enterprise_rag/structure_detector.py
+src/enterprise_rag/chunking_router.py
+```
+
+重新上传同一文档时，系统会按 `document_id` 删除旧向量，再写入新切分结果，避免不同策略的 Chunk 混在同一索引中。
 
 复现 Agent 多跳评测：
 

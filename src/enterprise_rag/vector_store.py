@@ -3,6 +3,9 @@ from pathlib import Path
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
     PointStruct,
     Record,
     ScoredPoint,
@@ -43,6 +46,19 @@ class VectorStore:
         self.client.upsert(
             collection_name=self.collection_name,
             points=points,
+        )
+
+    def delete_by_document_id(self, document_id: str) -> None:
+        self.client.delete(
+            collection_name=self.collection_name,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="document_id",
+                        match=MatchValue(value=document_id),
+                    )
+                ]
+            ),
         )
 
     def search(self, vector: list[float], limit: int = 5) -> list[ScoredPoint]:
