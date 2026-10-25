@@ -21,6 +21,7 @@
 - 检索策略评测：Recall@1、Recall@5、MRR
 - 80 题分类评测集：事实、改写、多跳、无答案、冲突和 Prompt Injection
 - 共享安全拦截：拒绝密钥泄露、伪造法条和删除知识库请求
+- `knowledge_base_id` 贯穿入库、向量检索、BM25 和 Agent 工具调用
 - FastAPI 接口和 Web 页面
 
 ## Agent 流程
@@ -79,7 +80,8 @@ uv run uvicorn enterprise_rag.main:app --reload
 ```json
 {
   "question": "对比两份制度中关于报销流程的差异",
-  "limit": 5
+  "limit": 5,
+  "knowledge_base_id": "default"
 }
 ```
 
@@ -109,7 +111,28 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-当前结果：`29 passed`，Ruff 检查通过。
+当前结果：`30 passed`，Ruff 检查通过。
+
+## 知识库隔离
+
+上传、普通 RAG 和 Agent 接口都接收 `knowledge_base_id`，当前默认值为 `default`：
+
+```text
+POST /documents/upload  -> Form knowledge_base_id
+POST /chat              -> JSON knowledge_base_id
+POST /agent/chat        -> JSON knowledge_base_id
+```
+
+该 ID 会写入每个 Qdrant Payload，并在向量检索和 BM25 Scroll 阶段作为过滤条件使用。Agent 工具不能由模型自行选择知识库，服务端会把当前请求的知识库范围传入所有工具。
+
+已验证同一问题在 `default` 和其他知识库下的行为：
+
+```text
+default  -> 返回答案和来源
+other-kb -> 返回 0 条来源
+```
+
+当前默认值只用于兼容现有页面。正式用户系统接入后，`knowledge_base_id` 必须由服务端根据登录用户和知识库成员关系确定，不能信任前端任意传入的值。
 
 ## 检索评测
 

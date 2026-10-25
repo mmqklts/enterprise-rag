@@ -9,8 +9,9 @@ class FailingRetriever:
         self,
         query: str,
         limit: int = 5,
+        knowledge_base_id: str = "default",
     ) -> list[Any]:
-        del query, limit
+        del query, limit, knowledge_base_id
         raise AssertionError("危险请求不应进入检索")
 
 

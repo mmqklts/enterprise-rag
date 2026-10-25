@@ -28,10 +28,23 @@ class HybridRetriever:
         self.bm25_retriever = bm25_retriever
         self.rrf_k = rrf_k
 
-    def search(self, query: str, limit: int = 5) -> list[RetrievalResult]:
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        knowledge_base_id: str = "default",
+    ) -> list[RetrievalResult]:
         query_vector = self.embedder.embed_texts([query])[0]
-        vector_results = self.vector_store.search(query_vector, limit=limit * 2)
-        bm25_results = self.bm25_retriever.search(query, limit=limit * 2)
+        vector_results = self.vector_store.search(
+            query_vector,
+            limit=limit * 2,
+            knowledge_base_id=knowledge_base_id,
+        )
+        bm25_results = self.bm25_retriever.search(
+            query,
+            limit=limit * 2,
+            knowledge_base_id=knowledge_base_id,
+        )
 
         candidates: dict[str | int, RetrievalResult] = {}
 

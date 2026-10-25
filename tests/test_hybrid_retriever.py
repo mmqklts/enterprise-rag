@@ -18,8 +18,30 @@ def test_hybrid_retriever() -> None:
     )
     store.upsert(
         [
-            PointStruct(id=1, vector=[1.0, 0.0], payload={"text": "员工请假需要提前申请"}),
-            PointStruct(id=2, vector=[0.0, 1.0], payload={"text": "报销需要提供发票"}),
+            PointStruct(
+                id=1,
+                vector=[1.0, 0.0],
+                payload={
+                    "text": "员工请假需要提前申请",
+                    "knowledge_base_id": "default",
+                },
+            ),
+            PointStruct(
+                id=2,
+                vector=[0.0, 1.0],
+                payload={
+                    "text": "报销需要提供发票",
+                    "knowledge_base_id": "default",
+                },
+            ),
+            PointStruct(
+                id=3,
+                vector=[1.0, 0.0],
+                payload={
+                    "text": "其他知识库的请假规则",
+                    "knowledge_base_id": "other",
+                },
+            ),
         ]
     )
 

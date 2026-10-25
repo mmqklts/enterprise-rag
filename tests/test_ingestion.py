@@ -15,8 +15,14 @@ class FakeVectorStore:
         self.points: list[PointStruct] = []
         self.deleted_document_ids: list[str] = []
 
-    def delete_by_document_id(self, document_id: str) -> None:
-        self.deleted_document_ids.append(document_id)
+    def delete_by_document_id(
+        self,
+        document_id: str,
+        knowledge_base_id: str = "default",
+    ) -> None:
+        self.deleted_document_ids.append(
+            f"{knowledge_base_id}:{document_id}"
+        )
 
     def upsert(self, points: list[PointStruct]) -> None:
         self.points.extend(points)
@@ -49,11 +55,13 @@ def test_ingestion_uses_detected_heading_structure(tmp_path: Any) -> None:
         file_path=path,
         document_id="doc-1",
         filename="policy.md",
+        knowledge_base_id="kb-1",
     )
 
+    assert result.knowledge_base_id == "kb-1"
     assert result.chunking_strategy == "heading"
     assert result.chunk_count == len(store.points)
-    assert store.deleted_document_ids == ["doc-1"]
+    assert store.deleted_document_ids == ["kb-1:doc-1"]
     payloads = [point.payload or {} for point in store.points]
     assert any(
         payload["section_title"] == "请假制度"
@@ -61,5 +69,9 @@ def test_ingestion_uses_detected_heading_structure(tmp_path: Any) -> None:
     )
     assert all(
         payload["chunking_strategy"] == "heading"
+        for payload in payloads
+    )
+    assert all(
+        payload["knowledge_base_id"] == "kb-1"
         for payload in payloads
     )

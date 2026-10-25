@@ -15,6 +15,7 @@ from enterprise_rag.vector_store import VectorStore
 @dataclass
 class IngestionResult:
     document_id: str
+    knowledge_base_id: str
     filename: str
     page_count: int
     chunk_count: int
@@ -47,6 +48,7 @@ class DocumentIngestionService:
         file_path: str | Path,
         document_id: str,
         filename: str,
+        knowledge_base_id: str = "default",
     ) -> IngestionResult:
         path = Path(file_path)
         pages = self._read_pages(path)
@@ -64,7 +66,8 @@ class DocumentIngestionService:
                     NAMESPACE_URL,
                     (
                         f"{document_id}:{chunk.strategy.value}:"
-                        f"{chunk.page_start}:{chunk.chunk_index}"
+                        f"{chunk.page_start}:{chunk.chunk_index}:"
+                        f"{knowledge_base_id}"
                     ),
                 )
             )
@@ -73,6 +76,7 @@ class DocumentIngestionService:
             payloads.append(
                 {
                     "document_id": document_id,
+                    "knowledge_base_id": knowledge_base_id,
                     "chunk_id": chunk_id,
                     "filename": filename,
                     "page": chunk.page_start,
@@ -102,11 +106,15 @@ class DocumentIngestionService:
             for payload, vector in zip(payloads, vectors, strict=True)
         ]
 
-        self.vector_store.delete_by_document_id(document_id)
+        self.vector_store.delete_by_document_id(
+            document_id,
+            knowledge_base_id=knowledge_base_id,
+        )
         self.vector_store.upsert(points)
 
         return IngestionResult(
             document_id=document_id,
+            knowledge_base_id=knowledge_base_id,
             filename=filename,
             page_count=len(pages),
             chunk_count=len(points),

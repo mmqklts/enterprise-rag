@@ -26,8 +26,15 @@ class BM25Retriever:
     def __init__(self, vector_store: VectorStore) -> None:
         self.vector_store = vector_store
 
-    def search(self, query: str, limit: int = 5) -> list[BM25Result]:
-        records = self.vector_store.scroll_all()
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        knowledge_base_id: str = "default",
+    ) -> list[BM25Result]:
+        records = self.vector_store.scroll_all(
+            knowledge_base_id=knowledge_base_id,
+        )
         if not records:
             return []
 

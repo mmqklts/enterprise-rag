@@ -48,7 +48,11 @@ class VectorStore:
             points=points,
         )
 
-    def delete_by_document_id(self, document_id: str) -> None:
+    def delete_by_document_id(
+        self,
+        document_id: str,
+        knowledge_base_id: str = "default",
+    ) -> None:
         self.client.delete(
             collection_name=self.collection_name,
             points_selector=Filter(
@@ -56,21 +60,41 @@ class VectorStore:
                     FieldCondition(
                         key="document_id",
                         match=MatchValue(value=document_id),
-                    )
+                    ),
+                    FieldCondition(
+                        key="knowledge_base_id",
+                        match=MatchValue(value=knowledge_base_id),
+                    ),
                 ]
             ),
         )
 
-    def search(self, vector: list[float], limit: int = 5) -> list[ScoredPoint]:
+    def search(
+        self,
+        vector: list[float],
+        limit: int = 5,
+        knowledge_base_id: str = "default",
+    ) -> list[ScoredPoint]:
         result = self.client.query_points(
             collection_name=self.collection_name,
             query=vector,
             limit=limit,
+            query_filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="knowledge_base_id",
+                        match=MatchValue(value=knowledge_base_id),
+                    )
+                ]
+            ),
             with_payload=True,
         )
         return result.points
-    
-    def scroll_all(self) -> list[Record]:
+
+    def scroll_all(
+        self,
+        knowledge_base_id: str = "default",
+    ) -> list[Record]:
         records: list[Record] = []
         offset = None
 
@@ -79,6 +103,14 @@ class VectorStore:
                 collection_name=self.collection_name,
                 limit=256,
                 offset=offset,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="knowledge_base_id",
+                            match=MatchValue(value=knowledge_base_id),
+                        )
+                    ]
+                ),
                 with_payload=True,
                 with_vectors=False,
             )

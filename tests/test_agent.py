@@ -27,8 +27,13 @@ class ScriptedAgentModel:
 
 
 class FakeRetriever:
-    def search(self, query: str, limit: int = 5) -> list[RetrievalResult]:
-        del limit
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        knowledge_base_id: str = "default",
+    ) -> list[RetrievalResult]:
+        del limit, knowledge_base_id
         return [
             RetrievalResult(
                 point_id="chunk-1",
@@ -59,7 +64,11 @@ class FakeReranker:
 
 
 class FakeVectorStore:
-    def scroll_all(self) -> list[Any]:
+    def scroll_all(
+        self,
+        knowledge_base_id: str = "default",
+    ) -> list[Any]:
+        del knowledge_base_id
         return [
             SimpleNamespace(
                 payload={

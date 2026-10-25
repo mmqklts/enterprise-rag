@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1)
     limit: int = Field(default=5, ge=1, le=20)
+    knowledge_base_id: str = Field(default="default", min_length=1)
 
 
 class AgentSourceResponse(BaseModel):
@@ -166,6 +167,7 @@ def chat(request: ChatRequest) -> RagResponse:
     return rag_service.answer(
         question=request.question,
         limit=request.limit,
+        knowledge_base_id=request.knowledge_base_id,
     )
 
 
@@ -175,6 +177,7 @@ def agent_chat(request: ChatRequest) -> AgentChatResponse:
         result = get_agent().run(
             question=request.question,
             limit=request.limit,
+            knowledge_base_id=request.knowledge_base_id,
         )
     except Exception as exc:
         logger.exception("agent_request_failed")
@@ -226,6 +229,7 @@ def agent_chat(request: ChatRequest) -> AgentChatResponse:
 @app.post("/documents/upload", response_model=IngestionResult)
 async def upload_document(
     file: Annotated[UploadFile, File()],
+    knowledge_base_id: Annotated[str, Form(min_length=1)] = "default",
 ) -> IngestionResult:
     filename = file.filename or ""
     suffix = Path(filename).suffix.lower()
@@ -252,6 +256,7 @@ async def upload_document(
             file_path=destination,
             document_id=document_id,
             filename=filename,
+            knowledge_base_id=knowledge_base_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

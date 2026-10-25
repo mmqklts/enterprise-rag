@@ -82,6 +82,7 @@ class KnowledgeRunContext:
     point_to_source: dict[str | int, int] = field(default_factory=dict)
     next_source_index: int = 1
     default_top_k: int = 5
+    knowledge_base_id: str = "default"
 
 
 @dataclass
@@ -200,7 +201,12 @@ class KnowledgeAgent:
         self.model = model
         self.max_steps = max_steps
 
-    def run(self, question: str, limit: int = 5) -> AgentResult:
+    def run(
+        self,
+        question: str,
+        limit: int = 5,
+        knowledge_base_id: str = "default",
+    ) -> AgentResult:
         started_at = time.perf_counter()
 
         if is_unsafe_request(question):
@@ -216,6 +222,7 @@ class KnowledgeAgent:
 
         context = KnowledgeRunContext(
             default_top_k=max(1, min(limit, 8)),
+            knowledge_base_id=knowledge_base_id,
         )
         tools = self._build_tools(context)
         messages: list[dict[str, Any]] = [
@@ -360,7 +367,10 @@ class KnowledgeAgent:
                 name=LIST_DOCUMENTS_TOOL.name,
                 description=LIST_DOCUMENTS_TOOL.description,
                 parameters=LIST_DOCUMENTS_TOOL.parameters,
-                handler=lambda arguments: self._list_documents(arguments),
+                handler=lambda arguments: self._list_documents(
+                    arguments,
+                    context,
+                ),
             ),
         }
 
@@ -378,6 +388,7 @@ class KnowledgeAgent:
         candidates = self.retriever.search(
             query,
             limit=max(top_k * 4, 10),
+            knowledge_base_id=context.knowledge_base_id,
         )
         results = self.reranker.rerank(
             query,
@@ -461,11 +472,17 @@ class KnowledgeAgent:
             },
         }
 
-    def _list_documents(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _list_documents(
+        self,
+        arguments: dict[str, Any],
+        context: KnowledgeRunContext,
+    ) -> dict[str, Any]:
         del arguments
         grouped: dict[str, dict[str, Any]] = {}
 
-        for record in self.vector_store.scroll_all():
+        for record in self.vector_store.scroll_all(
+            knowledge_base_id=context.knowledge_base_id,
+        ):
             payload = record.payload or {}
             document_id = str(payload.get("document_id", ""))
             if not document_id:

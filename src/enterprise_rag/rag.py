@@ -52,7 +52,12 @@ class RagService:
         self.reranker = reranker
         self.llm = llm
 
-    def answer(self, question: str, limit: int = 5) -> RagResponse:
+    def answer(
+        self,
+        question: str,
+        limit: int = 5,
+        knowledge_base_id: str = "default",
+    ) -> RagResponse:
         started_at = time.perf_counter()
 
         if is_unsafe_request(question):
@@ -79,6 +84,7 @@ class RagService:
         results = self.retriever.search(
             question,
             limit=max(limit * 4, 10),
+            knowledge_base_id=knowledge_base_id,
         )
         retrieval_ms = (time.perf_counter() - retrieval_started_at) * 1000
 
