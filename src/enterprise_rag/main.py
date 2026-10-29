@@ -6,19 +6,24 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from enterprise_rag.agent import KnowledgeAgent
 from enterprise_rag.agent_model import DeepSeekAgentModel
+from enterprise_rag.auth_routes import get_current_user
 from enterprise_rag.auth_routes import router as auth_router
 from enterprise_rag.bm25_retriever import BM25Retriever
+from enterprise_rag.db import get_db
 from enterprise_rag.embedder import TextEmbedder
 from enterprise_rag.hybrid_retriever import HybridRetriever
 from enterprise_rag.ingestion import DocumentIngestionService, IngestionResult
 from enterprise_rag.llm_client import DeepSeekClient
+from enterprise_rag.models import User
+from enterprise_rag.permissions import require_knowledge_base_access
 from enterprise_rag.rag import RagResponse, RagService
 from enterprise_rag.reranker import Reranker
 from enterprise_rag.vector_store import VectorStore
@@ -31,7 +36,7 @@ logger = logging.getLogger(__name__)
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1)
     limit: int = Field(default=5, ge=1, le=20)
-    knowledge_base_id: str = Field(default="default", min_length=1)
+    knowledge_base_id: int = Field(gt=0)
 
 
 class AgentSourceResponse(BaseModel):
@@ -164,22 +169,42 @@ def health() -> dict[str, str]:
 
 
 @app.post("/chat", response_model=RagResponse)
-def chat(request: ChatRequest) -> RagResponse:
+def chat(
+    request: ChatRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_db)],
+) -> RagResponse:
+    knowledge_base = require_knowledge_base_access(
+        session=session,
+        user_id=user.id,
+        knowledge_base_id=request.knowledge_base_id,
+        allowed_roles={"owner", "editor", "viewer"},
+    )
     rag_service = get_rag_service()
     return rag_service.answer(
         question=request.question,
         limit=request.limit,
-        knowledge_base_id=request.knowledge_base_id,
+        knowledge_base_id=str(knowledge_base.id),
     )
 
 
 @app.post("/agent/chat", response_model=AgentChatResponse)
-def agent_chat(request: ChatRequest) -> AgentChatResponse:
+def agent_chat(
+    request: ChatRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_db)],
+) -> AgentChatResponse:
+    knowledge_base = require_knowledge_base_access(
+        session=session,
+        user_id=user.id,
+        knowledge_base_id=request.knowledge_base_id,
+        allowed_roles={"owner", "editor", "viewer"},
+    )
     try:
         result = get_agent().run(
             question=request.question,
             limit=request.limit,
-            knowledge_base_id=request.knowledge_base_id,
+            knowledge_base_id=str(knowledge_base.id),
         )
     except Exception as exc:
         logger.exception("agent_request_failed")
@@ -231,8 +256,16 @@ def agent_chat(request: ChatRequest) -> AgentChatResponse:
 @app.post("/documents/upload", response_model=IngestionResult)
 async def upload_document(
     file: Annotated[UploadFile, File()],
-    knowledge_base_id: Annotated[str, Form(min_length=1)] = "default",
+    knowledge_base_id: Annotated[int, Form(gt=0)],
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_db)],
 ) -> IngestionResult:
+    knowledge_base = require_knowledge_base_access(
+        session=session,
+        user_id=user.id,
+        knowledge_base_id=knowledge_base_id,
+        allowed_roles={"owner", "editor"},
+    )
     filename = file.filename or ""
     suffix = Path(filename).suffix.lower()
 
@@ -258,7 +291,7 @@ async def upload_document(
             file_path=destination,
             document_id=document_id,
             filename=filename,
-            knowledge_base_id=knowledge_base_id,
+            knowledge_base_id=str(knowledge_base.id),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

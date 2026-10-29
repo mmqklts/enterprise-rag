@@ -34,6 +34,28 @@
       border-radius: 8px;
       padding: 20px;
     }
+    .auth-section { grid-column: 1 / -1; }
+    .auth-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 20px;
+    }
+    .auth-form {
+      display: grid;
+      gap: 10px;
+    }
+    .auth-form h3 { margin: 0; font-size: 16px; }
+    .user-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: end;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e5e7eb;
+    }
+    .user-row label { flex: 1 1 260px; }
+    .user-row button { width: auto; margin-top: 0; }
     h2 { margin: 0 0 16px; font-size: 19px; }
     input, textarea, button {
       width: 100%;
@@ -148,6 +170,7 @@
     .source-text { color: #52606d; line-height: 1.6; }
     @media (max-width: 800px) {
       main { grid-template-columns: 1fr; }
+      .auth-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -158,6 +181,33 @@
   </header>
 
   <main>
+    <section class="auth-section">
+      <h2>登录与知识库</h2>
+      <div class="auth-grid">
+        <form id="login-form" class="auth-form">
+          <h3>登录</h3>
+          <input id="login-username" placeholder="用户名" autocomplete="username" required>
+          <input id="login-password" type="password" placeholder="密码" autocomplete="current-password" required>
+          <button type="submit">登录</button>
+        </form>
+        <form id="register-form" class="auth-form">
+          <h3>注册</h3>
+          <input id="register-username" placeholder="用户名" autocomplete="username" required>
+          <input id="register-email" type="email" placeholder="邮箱" autocomplete="email" required>
+          <input id="register-password" type="password" placeholder="密码，至少 8 位" autocomplete="new-password" required>
+          <button type="submit">注册并登录</button>
+        </form>
+      </div>
+      <div id="auth-status" class="status"></div>
+      <div class="user-row">
+        <label>
+          当前知识库
+          <select id="knowledge-base" disabled></select>
+        </label>
+        <button id="logout-button" type="button" hidden>退出登录</button>
+      </div>
+    </section>
+
     <section>
       <h2>文档入库</h2>
       <input id="file" type="file" accept=".pdf,.md,.markdown,.txt">
@@ -186,6 +236,12 @@
     const traceBox = document.querySelector("#trace");
     const answerBox = document.querySelector("#answer");
     const sourcesBox = document.querySelector("#sources");
+    const loginForm = document.querySelector("#login-form");
+    const registerForm = document.querySelector("#register-form");
+    const authStatus = document.querySelector("#auth-status");
+    const knowledgeBaseSelect = document.querySelector("#knowledge-base");
+    const logoutButton = document.querySelector("#logout-button");
+    let accessToken = sessionStorage.getItem("rag_access_token") || "";
     const toolLabels = {
       search_knowledge_base: "检索知识库",
       read_source_chunk: "读取原文",
@@ -395,6 +451,110 @@
       return data;
     }
 
+    function authHeaders(extra = {}) {
+      return {
+        ...extra,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      };
+    }
+
+    function selectedKnowledgeBaseId() {
+      const value = Number(knowledgeBaseSelect.value);
+      return Number.isInteger(value) && value > 0 ? value : null;
+    }
+
+    function applySession(data) {
+      accessToken = data.access_token;
+      sessionStorage.setItem("rag_access_token", accessToken);
+      knowledgeBaseSelect.replaceChildren();
+
+      data.knowledge_bases.forEach((knowledgeBase) => {
+        const option = document.createElement("option");
+        option.value = String(knowledgeBase.id);
+        option.textContent = `${knowledgeBase.name}（${knowledgeBase.role}）`;
+        knowledgeBaseSelect.append(option);
+      });
+
+      knowledgeBaseSelect.disabled = data.knowledge_bases.length === 0;
+      logoutButton.hidden = false;
+      authStatus.className = "status";
+      authStatus.textContent = `已登录：${data.username}`;
+    }
+
+    function clearSession() {
+      accessToken = "";
+      sessionStorage.removeItem("rag_access_token");
+      knowledgeBaseSelect.replaceChildren();
+      knowledgeBaseSelect.disabled = true;
+      logoutButton.hidden = true;
+    }
+
+    async function authenticate(path, payload) {
+      authStatus.className = "status";
+      authStatus.textContent = "正在验证身份...";
+
+      try {
+        const response = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        applySession(await readResponse(response));
+      } catch (error) {
+        authStatus.className = "status error";
+        authStatus.textContent = error.message;
+      }
+    }
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await authenticate("/auth/login", {
+        username: document.querySelector("#login-username").value.trim(),
+        password: document.querySelector("#login-password").value,
+      });
+    });
+
+    registerForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await authenticate("/auth/register", {
+        username: document.querySelector("#register-username").value.trim(),
+        email: document.querySelector("#register-email").value.trim(),
+        password: document.querySelector("#register-password").value,
+      });
+    });
+
+    logoutButton.addEventListener("click", () => {
+      clearSession();
+      authStatus.className = "status";
+      authStatus.textContent = "已退出登录";
+    });
+
+    async function restoreSession() {
+      if (!accessToken) {
+        return;
+      }
+
+      try {
+        const response = await fetch("/auth/me", {
+          headers: authHeaders(),
+        });
+        if (!response.ok) {
+          throw new Error("登录状态已失效");
+        }
+        const user = await response.json();
+        applySession({
+          access_token: accessToken,
+          user_id: user.user_id,
+          username: user.username,
+          knowledge_bases: user.knowledge_bases,
+        });
+      } catch {
+        clearSession();
+      }
+    }
+
+    restoreSession();
+
     uploadButton.addEventListener("click", async () => {
       const file = fileInput.files[0];
       if (!file) {
@@ -403,8 +563,16 @@
         return;
       }
 
+      const knowledgeBaseId = selectedKnowledgeBaseId();
+      if (!accessToken || knowledgeBaseId === null) {
+        uploadStatus.textContent = "请先登录并选择知识库";
+        uploadStatus.className = "status error";
+        return;
+      }
+
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("knowledge_base_id", String(knowledgeBaseId));
       uploadButton.disabled = true;
       uploadStatus.className = "status";
       uploadStatus.textContent = "正在解析、切分并建立索引...";
@@ -412,6 +580,7 @@
       try {
         const response = await fetch("/documents/upload", {
           method: "POST",
+          headers: authHeaders(),
           body: formData,
         });
         const data = await readResponse(response);
@@ -433,6 +602,13 @@
         return;
       }
 
+      const knowledgeBaseId = selectedKnowledgeBaseId();
+      if (!accessToken || knowledgeBaseId === null) {
+        chatStatus.textContent = "请先登录并选择知识库";
+        chatStatus.className = "status error";
+        return;
+      }
+
       chatButton.disabled = true;
       chatStatus.className = "status";
       chatStatus.textContent = "Agent 正在规划并调用工具...";
@@ -443,8 +619,12 @@
       try {
         const response = await fetch("/agent/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, limit: 5 }),
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            question,
+            limit: 5,
+            knowledge_base_id: knowledgeBaseId,
+          }),
         });
         const data = await readResponse(response);
 

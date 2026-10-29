@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import re
 import time
 from collections import defaultdict
@@ -17,15 +18,27 @@ def normalize_text(value: str) -> str:
     return re.sub(r"\s+", "", value)
 
 
-def ask(endpoint: str, question: str) -> dict[str, Any]:
+def ask(
+    endpoint: str,
+    question: str,
+    token: str,
+    knowledge_base_id: int,
+) -> dict[str, Any]:
     payload = json.dumps(
-        {"question": question, "limit": 5},
+        {
+            "question": question,
+            "limit": 5,
+            "knowledge_base_id": knowledge_base_id,
+        },
         ensure_ascii=False,
     ).encode("utf-8")
     request = Request(
         f"{API_BASE}{endpoint}",
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
         method="POST",
     )
 
@@ -202,8 +215,29 @@ def main() -> None:
     parser.add_argument("--category", action="append")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--output")
+    parser.add_argument(
+        "--token",
+        default=os.getenv("RAG_ACCESS_TOKEN"),
+    )
+    parser.add_argument(
+        "--knowledge-base-id",
+        type=int,
+        default=(
+            int(os.environ["RAG_KNOWLEDGE_BASE_ID"])
+            if os.getenv("RAG_KNOWLEDGE_BASE_ID")
+            else None
+        ),
+    )
     parser.add_argument("--skip-judge", action="store_true")
     args = parser.parse_args()
+
+    if not args.token:
+        raise RuntimeError("请通过 --token 或 RAG_ACCESS_TOKEN 提供 JWT")
+    if args.knowledge_base_id is None:
+        raise RuntimeError(
+            "请通过 --knowledge-base-id 或 RAG_KNOWLEDGE_BASE_ID "
+            "提供知识库 ID"
+        )
 
     endpoint = "/chat" if args.endpoint == "chat" else "/agent/chat"
     categories = set(args.category) if args.category else None
@@ -220,7 +254,12 @@ def main() -> None:
 
     for position, item in enumerate(items, start=1):
         print(f"[{position}/{len(items)}] {item['id']} {item['question']}")
-        response = ask(endpoint, item["question"])
+        response = ask(
+            endpoint,
+            item["question"],
+            token=args.token,
+            knowledge_base_id=args.knowledge_base_id,
+        )
         answer = str(response.get("answer", ""))
         sources = response.get("sources", [])
 

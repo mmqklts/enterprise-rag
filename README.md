@@ -25,6 +25,7 @@
 - PostgreSQL 用户、知识库和成员角色数据模型
 - Alembic 数据库迁移
 - scrypt 密码哈希与 HS256 JWT 身份认证
+- 基于知识库成员角色的上传与查询权限控制
 - FastAPI 接口和 Web 页面
 
 ## Agent 流程
@@ -84,7 +85,7 @@ uv run uvicorn enterprise_rag.main:app --reload
 {
   "question": "对比两份制度中关于报销流程的差异",
   "limit": 5,
-  "knowledge_base_id": "default"
+  "knowledge_base_id": 1
 }
 ```
 
@@ -114,7 +115,7 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-当前结果：`33 passed`，Ruff 检查通过。
+当前结果：`35 passed`，Ruff 检查通过。
 
 ## 权限数据模型
 
@@ -150,7 +151,7 @@ viewer   只读查询
 
 ## 知识库隔离
 
-上传、普通 RAG 和 Agent 接口都接收 `knowledge_base_id`，当前默认值为 `default`：
+上传、普通 RAG 和 Agent 接口都接收数据库整数 `knowledge_base_id`：
 
 ```text
 POST /documents/upload  -> Form knowledge_base_id
@@ -167,9 +168,21 @@ default  -> 返回答案和来源
 other-kb -> 返回 0 条来源
 ```
 
-当前默认值只用于兼容现有页面。正式用户系统接入后，`knowledge_base_id` 必须由服务端根据登录用户和知识库成员关系确定，不能信任前端任意传入的值。
+`knowledge_base_id` 现在是数据库中的整数知识库 ID。除认证接口外，所有业务接口必须携带：
 
-当前阶段只完成数据库模型和迁移，尚未实现注册、登录、JWT 签发以及接口级成员权限检查。
+```http
+Authorization: Bearer <access_token>
+```
+
+权限矩阵：
+
+| 操作 | owner | editor | viewer |
+|---|---:|---:|---:|
+| 普通 RAG `/chat` | 允许 | 允许 | 允许 |
+| Agent `/agent/chat` | 允许 | 允许 | 允许 |
+| 上传 `/documents/upload` | 允许 | 允许 | 拒绝 |
+
+服务端会查询 `knowledge_base_members` 并校验用户角色。客户端不能通过修改 `knowledge_base_id` 访问未加入的知识库。
 
 ## 身份认证
 
@@ -197,7 +210,7 @@ knowledge_bases          默认知识库
 knowledge_base_members   owner 成员关系
 ```
 
-当前 `/chat`、`/agent/chat` 和 `/documents/upload` 尚未强制要求 Bearer Token。下一步会把 `knowledge_base_id` 从客户端参数改为根据 Token 用户名和成员关系由服务端解析，并校验 owner/editor/viewer 权限。
+Web 页面已经加入登录、注册和知识库选择，并在上传与问答请求中携带 JWT。
 
 ## 检索评测
 
@@ -288,6 +301,8 @@ src/enterprise_rag/chunking_router.py
 uv run python scripts/evaluate_civil_eval80.py `
   --endpoint agent `
   --category multi_hop `
+  --token "<access_token>" `
+  --knowledge-base-id 1 `
   --output data/eval/civil_code_eval_80_agent_multi_hop_results.jsonl
 ```
 
@@ -316,5 +331,7 @@ Token 消耗：0
 uv run python scripts/evaluate_civil_eval80.py `
   --endpoint agent `
   --category prompt_injection `
+  --token "<access_token>" `
+  --knowledge-base-id 1 `
   --output data/eval/civil_code_eval_80_agent_prompt_injection_results.jsonl
 ```

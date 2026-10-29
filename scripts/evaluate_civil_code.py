@@ -1,4 +1,6 @@
+import argparse
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -16,15 +18,26 @@ def normalize_text(value: str) -> str:
     return re.sub(r"\s+", "", value)
 
 
-def ask(question: str) -> dict[str, Any]:
+def ask(
+    question: str,
+    token: str,
+    knowledge_base_id: int,
+) -> dict[str, Any]:
     payload = json.dumps(
-        {"question": question, "limit": 5},
+        {
+            "question": question,
+            "limit": 5,
+            "knowledge_base_id": knowledge_base_id,
+        },
         ensure_ascii=False,
     ).encode("utf-8")
     request = Request(
         API_URL,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
         method="POST",
     )
 
@@ -131,6 +144,27 @@ def load_questions() -> list[dict[str, Any]]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--token",
+        default=os.getenv("RAG_ACCESS_TOKEN"),
+    )
+    parser.add_argument(
+        "--knowledge-base-id",
+        type=int,
+        default=(
+            int(os.environ["RAG_KNOWLEDGE_BASE_ID"])
+            if os.getenv("RAG_KNOWLEDGE_BASE_ID")
+            else None
+        ),
+    )
+    args = parser.parse_args()
+    if not args.token or args.knowledge_base_id is None:
+        raise RuntimeError(
+            "请提供 JWT 和知识库 ID："
+            "--token / --knowledge-base-id"
+        )
+
     questions = load_questions()
     judge = DeepSeekClient()
     results: list[dict[str, Any]] = []
@@ -139,7 +173,11 @@ def main() -> None:
         question = item["question"]
         print(f"[{position}/{len(questions)}] {question}")
 
-        response = ask(question)
+        response = ask(
+            question,
+            token=args.token,
+            knowledge_base_id=args.knowledge_base_id,
+        )
         answer = str(response["answer"])
         sources = response["sources"]
 
