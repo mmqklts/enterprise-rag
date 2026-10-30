@@ -21,6 +21,9 @@ from enterprise_rag.db import get_db
 from enterprise_rag.embedder import TextEmbedder
 from enterprise_rag.hybrid_retriever import HybridRetriever
 from enterprise_rag.ingestion import DocumentIngestionService, IngestionResult
+from enterprise_rag.knowledge_base_routes import (
+    router as knowledge_base_router,
+)
 from enterprise_rag.llm_client import DeepSeekClient
 from enterprise_rag.models import User
 from enterprise_rag.permissions import require_knowledge_base_access
@@ -84,6 +87,7 @@ ALLOWED_SUFFIXES = {".pdf", ".md", ".markdown", ".txt"}
 
 app = FastAPI(title="Enterprise Knowledge Agent API")
 app.include_router(auth_router)
+app.include_router(knowledge_base_router)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = PROJECT_ROOT / "static"
 

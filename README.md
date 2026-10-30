@@ -115,7 +115,7 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-当前结果：`35 passed`，Ruff 检查通过。
+当前结果：`40 passed`，Ruff 检查通过。
 
 ## 权限数据模型
 
@@ -211,6 +211,27 @@ knowledge_base_members   owner 成员关系
 ```
 
 Web 页面已经加入登录、注册和知识库选择，并在上传与问答请求中携带 JWT。
+
+## 知识库管理
+
+知识库管理接口：
+
+```text
+POST   /knowledge-bases
+GET    /knowledge-bases
+POST   /knowledge-bases/{id}/members
+PATCH  /knowledge-bases/{id}/members/{user_id}
+DELETE /knowledge-bases/{id}/members/{user_id}
+```
+
+管理规则：
+
+- 所有接口都需要 Bearer Token。
+- 新知识库创建后，创建者自动成为 `owner`。
+- 只有 `owner` 可以添加、修改和移除成员。
+- 同一个用户不能在一个知识库中重复加入。
+- 角色只能是 `owner`、`editor` 或 `viewer`。
+- 知识库必须至少保留一个 `owner`，不能降级或删除最后一个 owner。
 
 ## 检索评测
 
