@@ -29,6 +29,7 @@
 - Redis + Celery 异步文档解析任务
 - 文档任务状态查询与失败重试
 - 文档列表、删除、原文件清理和向量同步
+- 请求 ID、结构化日志、阶段耗时、Token 和成本估算
 - FastAPI 接口和 Web 页面
 
 ## Agent 流程
@@ -170,7 +171,44 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-当前结果：`43 passed`，Ruff 检查通过。
+当前结果：`45 passed`，Ruff 检查通过。
+
+## 可观测性
+
+每个 HTTP 响应都会返回 `X-Request-ID`。结构化日志包含：
+
+```text
+request_id
+method
+path
+status_code
+duration_ms
+```
+
+普通 RAG 日志额外记录：
+
+```text
+user_id
+knowledge_base_id
+retrieval_ms
+rerank_ms
+llm_ms
+total_ms
+prompt_tokens
+completion_tokens
+total_tokens
+estimated_cost
+```
+
+成本通过以下环境变量计算：
+
+```dotenv
+LLM_CACHE_HIT_PRICE_PER_MILLION=0.04
+LLM_CACHE_MISS_PRICE_PER_MILLION=2
+LLM_OUTPUT_PRICE_PER_MILLION=8
+```
+
+实际使用时应按所用模型和当前价格修改。日志不记录用户问题原文、API Key 或密码。
 
 ## 权限数据模型
 

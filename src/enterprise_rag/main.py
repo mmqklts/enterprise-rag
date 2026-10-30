@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from datetime import datetime
@@ -7,7 +8,15 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -43,6 +52,13 @@ from enterprise_rag.knowledge_base_routes import (
 )
 from enterprise_rag.llm_client import DeepSeekClient
 from enterprise_rag.models import User
+from enterprise_rag.observability import (
+    RequestLoggingMiddleware,
+    estimate_llm_cost,
+)
+from enterprise_rag.observability import (
+    logger as request_logger,
+)
 from enterprise_rag.permissions import require_knowledge_base_access
 from enterprise_rag.rag import RagResponse, RagService
 from enterprise_rag.reranker import Reranker
@@ -114,6 +130,7 @@ MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 ALLOWED_SUFFIXES = {".pdf", ".md", ".markdown", ".txt"}
 
 app = FastAPI(title="Enterprise Knowledge Agent API")
+app.add_middleware(RequestLoggingMiddleware)
 app.include_router(auth_router)
 app.include_router(knowledge_base_router)
 app.include_router(job_router)
@@ -203,40 +220,67 @@ def health() -> dict[str, str]:
 
 @app.post("/chat", response_model=RagResponse)
 def chat(
-    request: ChatRequest,
+    payload: ChatRequest,
+    http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
 ) -> RagResponse:
     knowledge_base = require_knowledge_base_access(
         session=session,
         user_id=user.id,
-        knowledge_base_id=request.knowledge_base_id,
+        knowledge_base_id=payload.knowledge_base_id,
         allowed_roles={"owner", "editor", "viewer"},
     )
     rag_service = get_rag_service()
-    return rag_service.answer(
-        question=request.question,
-        limit=request.limit,
+    result = rag_service.answer(
+        question=payload.question,
+        limit=payload.limit,
         knowledge_base_id=str(knowledge_base.id),
     )
+    request_logger.info(
+        json.dumps(
+            {
+                "event": "rag_request",
+                "request_id": http_request.state.request_id,
+                "user_id": user.id,
+                "knowledge_base_id": knowledge_base.id,
+                "retrieval_ms": result.metrics.retrieval_ms,
+                "rerank_ms": result.metrics.rerank_ms,
+                "llm_ms": result.metrics.llm_ms,
+                "total_ms": result.metrics.total_ms,
+                "prompt_tokens": result.metrics.prompt_tokens,
+                "completion_tokens": result.metrics.completion_tokens,
+                "total_tokens": result.metrics.total_tokens,
+                "estimated_cost": estimate_llm_cost(
+                    prompt_tokens=result.metrics.prompt_tokens,
+                    completion_tokens=result.metrics.completion_tokens,
+                    cache_hit_tokens=result.metrics.cache_hit_tokens,
+                    cache_miss_tokens=result.metrics.cache_miss_tokens,
+                ),
+            },
+            ensure_ascii=False,
+        )
+    )
+    return result
 
 
 @app.post("/agent/chat", response_model=AgentChatResponse)
 def agent_chat(
-    request: ChatRequest,
+    payload: ChatRequest,
+    http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
 ) -> AgentChatResponse:
     knowledge_base = require_knowledge_base_access(
         session=session,
         user_id=user.id,
-        knowledge_base_id=request.knowledge_base_id,
+        knowledge_base_id=payload.knowledge_base_id,
         allowed_roles={"owner", "editor", "viewer"},
     )
     try:
         result = get_agent().run(
-            question=request.question,
-            limit=request.limit,
+            question=payload.question,
+            limit=payload.limit,
             knowledge_base_id=str(knowledge_base.id),
         )
     except Exception as exc:
@@ -245,6 +289,28 @@ def agent_chat(
             status_code=503,
             detail="Agent 暂时不可用，请检查模型配置或查看服务日志。",
         ) from exc
+
+    request_logger.info(
+        json.dumps(
+            {
+                "event": "agent_request",
+                "request_id": http_request.state.request_id,
+                "user_id": user.id,
+                "knowledge_base_id": knowledge_base.id,
+                "duration_ms": result.duration_ms,
+                "request_count": result.usage.request_count,
+                "prompt_tokens": result.usage.prompt_tokens,
+                "completion_tokens": result.usage.completion_tokens,
+                "total_tokens": result.usage.total_tokens,
+                "estimated_cost": estimate_llm_cost(
+                    prompt_tokens=result.usage.prompt_tokens,
+                    completion_tokens=result.usage.completion_tokens,
+                ),
+                "stop_reason": result.stop_reason,
+            },
+            ensure_ascii=False,
+        )
+    )
 
     return AgentChatResponse(
         answer=result.answer,
