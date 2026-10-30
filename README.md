@@ -79,10 +79,23 @@ Compose 会同时启动：
 ```text
 app       FastAPI Web/API
 worker    Celery 文档处理 Worker
+migrate   启动时执行 Alembic 数据库迁移
 postgres  用户和知识库权限元数据
 redis     Celery Broker 和结果后端
 qdrant    向量数据库
 ```
+
+Linux 服务器首次部署：
+
+```bash
+git clone https://github.com/mmqklts/enterprise-rag.git
+cd enterprise-rag
+cp .env.example .env
+docker compose up -d --build
+docker compose ps -a
+```
+
+`migrate` 容器执行完成后应以退出码 `0` 结束，其余服务应保持运行。
 
 ## 异步文档处理
 

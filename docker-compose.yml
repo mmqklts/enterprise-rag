@@ -46,6 +46,19 @@ services:
       timeout: 3s
       retries: 10
 
+  migrate:
+    build: .
+    command:
+      - /app/.venv/bin/alembic
+      - upgrade
+      - head
+    env_file:
+      - .env
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   app:
     build: .
     ports:
@@ -61,6 +74,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   worker:
     build: .
@@ -82,6 +97,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   qdrant_data:

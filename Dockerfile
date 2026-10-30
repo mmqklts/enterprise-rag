@@ -16,6 +16,8 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
 
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
+COPY alembic.ini ./
+COPY migrations ./migrations
 
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
 
