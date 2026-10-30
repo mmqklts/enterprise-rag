@@ -5,6 +5,7 @@ from pathlib import Path
 
 from enterprise_rag.celery_app import celery_app
 from enterprise_rag.db import SessionLocal
+from enterprise_rag.document_service import upsert_document_record
 from enterprise_rag.embedder import TextEmbedder
 from enterprise_rag.ingestion import DocumentIngestionService
 from enterprise_rag.job_service import (
@@ -49,6 +50,16 @@ def ingest_document_task(self, job_id: int) -> dict[str, str | int]:
             document_id=document_id,
             filename=job.filename,
             knowledge_base_id=str(job.knowledge_base_id),
+        )
+        upsert_document_record(
+            session=session,
+            knowledge_base_id=job.knowledge_base_id,
+            created_by=job.created_by,
+            document_id=result.document_id,
+            filename=job.filename,
+            stored_path=job.stored_path,
+            chunking_strategy=result.chunking_strategy,
+            chunk_count=result.chunk_count,
         )
         mark_job_completed(
             session=session,

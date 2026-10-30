@@ -154,3 +154,38 @@ class IngestionJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
     )
+
+
+class DocumentRecord(Base):
+    __tablename__ = "documents"
+    __table_args__ = (
+        UniqueConstraint(
+            "knowledge_base_id",
+            "document_id",
+            name="uq_documents_knowledge_base_document",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        index=True,
+    )
+    created_by: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    document_id: Mapped[str] = mapped_column(String(64), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(500))
+    chunking_strategy: Mapped[str] = mapped_column(String(16))
+    chunk_count: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )

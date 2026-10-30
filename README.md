@@ -28,6 +28,7 @@
 - 基于知识库成员角色的上传与查询权限控制
 - Redis + Celery 异步文档解析任务
 - 文档任务状态查询与失败重试
+- 文档列表、删除、原文件清理和向量同步
 - FastAPI 接口和 Web 页面
 
 ## Agent 流程
@@ -104,6 +105,26 @@ failed      处理失败
 
 Web 页面上传后会轮询 `/jobs/{job_id}`，完成后再提示 chunk 数量。
 
+文档生命周期接口：
+
+```text
+GET    /knowledge-bases/{id}/documents
+DELETE /knowledge-bases/{id}/documents/{document_id}
+```
+
+删除操作要求 `owner` 或 `editor` 权限，并同步清理数据库记录、Qdrant 向量和上传原文件。
+
+真实验证流程已经通过：
+
+```text
+上传 -> pending -> processing -> completed
+-> 文档列表可见
+-> 问答返回答案
+-> 删除返回 204
+-> 文档列表为空
+-> Qdrant 对应知识库向量为 0
+```
+
 ## 本地开发
 
 ```powershell
@@ -149,7 +170,7 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-当前结果：`42 passed`，Ruff 检查通过。
+当前结果：`43 passed`，Ruff 检查通过。
 
 ## 权限数据模型
 

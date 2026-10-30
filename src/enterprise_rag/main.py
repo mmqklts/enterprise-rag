@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
@@ -18,6 +19,11 @@ from enterprise_rag.auth_routes import get_current_user
 from enterprise_rag.auth_routes import router as auth_router
 from enterprise_rag.bm25_retriever import BM25Retriever
 from enterprise_rag.db import get_db
+from enterprise_rag.document_service import (
+    delete_document_record,
+    get_document_record,
+    list_document_records,
+)
 from enterprise_rag.embedder import TextEmbedder
 from enterprise_rag.hybrid_retriever import HybridRetriever
 from enterprise_rag.ingestion import DocumentIngestionService
@@ -91,6 +97,16 @@ class AgentChatResponse(BaseModel):
     stop_reason: str
     citation_status: str
     duration_ms: float
+
+
+class DocumentResponse(BaseModel):
+    knowledge_base_id: int
+    document_id: str
+    filename: str
+    chunking_strategy: str
+    chunk_count: int
+    created_at: datetime
+    updated_at: datetime
 
 
 UPLOAD_DIR = Path("data/uploads")
@@ -326,3 +342,72 @@ async def upload_document(
         ) from exc
 
     return job_response(job)
+
+
+@app.get(
+    "/knowledge-bases/{knowledge_base_id}/documents",
+    response_model=list[DocumentResponse],
+)
+def list_documents(
+    knowledge_base_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_db)],
+) -> list[DocumentResponse]:
+    require_knowledge_base_access(
+        session=session,
+        user_id=user.id,
+        knowledge_base_id=knowledge_base_id,
+        allowed_roles={"owner", "editor", "viewer"},
+    )
+    records = list_document_records(session, knowledge_base_id)
+    return [
+        DocumentResponse(
+            knowledge_base_id=record.knowledge_base_id,
+            document_id=record.document_id,
+            filename=record.filename,
+            chunking_strategy=record.chunking_strategy,
+            chunk_count=record.chunk_count,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+        for record in records
+    ]
+
+
+@app.delete(
+    "/knowledge-bases/{knowledge_base_id}/documents/{document_id}",
+    status_code=204,
+)
+def delete_document(
+    knowledge_base_id: int,
+    document_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_db)],
+) -> None:
+    require_knowledge_base_access(
+        session=session,
+        user_id=user.id,
+        knowledge_base_id=knowledge_base_id,
+        allowed_roles={"owner", "editor"},
+    )
+
+    try:
+        record = get_document_record(
+            session=session,
+            knowledge_base_id=knowledge_base_id,
+            document_id=document_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    get_vector_store().delete_by_document_id(
+        document_id,
+        knowledge_base_id=str(knowledge_base_id),
+    )
+
+    stored_path = Path(record.stored_path).resolve()
+    upload_root = UPLOAD_DIR.resolve()
+    if upload_root in stored_path.parents and stored_path.exists():
+        stored_path.unlink()
+
+    delete_document_record(session, record)
