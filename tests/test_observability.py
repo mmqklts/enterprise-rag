@@ -16,6 +16,11 @@ def test_request_id_is_returned() -> None:
 
     assert response.status_code == 200
     assert response.headers["X-Request-ID"] == "test-request-id"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert "frame-ancestors 'none'" in response.headers[
+        "Content-Security-Policy"
+    ]
 
 
 def test_estimate_llm_cost(monkeypatch) -> None:

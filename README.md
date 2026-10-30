@@ -29,6 +29,9 @@
 - Redis + Celery 异步文档解析任务
 - 文档任务状态查询与失败重试
 - 文档列表、删除、原文件清理和向量同步
+- Redis 固定窗口限流，覆盖登录、注册、问答、上传和管理操作
+- 认证、成员管理和文档生命周期审计日志
+- CSP、HSTS、禁止页面嵌套等 HTTP 安全响应头
 - 请求 ID、结构化日志、阶段耗时、Token 和成本估算
 - FastAPI 接口和 Web 页面
 
@@ -66,7 +69,10 @@ Agent 分析问题
 Copy-Item .env.example .env
 ```
 
-在 `.env` 中填写 `DEEPSEEK_API_KEY`，然后启动：
+在 `.env` 中填写 `DEEPSEEK_API_KEY`，并按
+[生产部署清单](docs/PRODUCTION_DEPLOYMENT.md) 生成随机
+`POSTGRES_PASSWORD` 和 `JWT_SECRET_KEY`。Compose 不再接受缺失的
+PostgreSQL 密码。然后启动：
 
 ```powershell
 docker compose up -d --build
@@ -184,7 +190,7 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-当前结果：`45 passed`，Ruff 检查通过。
+当前结果：`48 passed`，Ruff 检查通过。
 
 ## 可观测性
 
@@ -301,6 +307,9 @@ GET  /auth/me        使用 Bearer Token 获取当前用户和知识库角色
 ```
 
 密码使用 Python 标准库 `scrypt` 加盐哈希，不保存明文密码。JWT 使用 HS256 签名，并提供过期时间。
+
+当 `APP_ENV=production` 时，服务会拒绝默认值、占位值或少于 32 字符的
+`JWT_SECRET_KEY`，配置错误会直接阻止启动。
 
 环境变量：
 
@@ -450,7 +459,18 @@ Prompt Injection 评测结果为 `3/3` 正确拒绝，危险请求不会进入�
 Token 消耗：0
 ```
 
-该规则层是基础防护，生产环境还需要权限控制、输入分类器、审计日志和工具级授权。
+当前项目还提供：
+
+- Redis 限流：登录、注册、普通 RAG、Agent、上传、删除和知识库创建分别配置阈值。
+- 审计日志：记录认证结果、知识库成员变更、文档上传和删除，不记录密码或 Token。
+- 安全响应头：CSP、HSTS、`X-Content-Type-Options` 和
+  `X-Frame-Options`。
+- 生产密钥校验：生产环境拒绝弱 JWT 密钥。
+- 网络隔离：Compose 默认只把服务端口绑定到 `127.0.0.1`，公网入口应经过
+  HTTPS 反向代理。
+
+部署、备份和上线检查见
+[生产部署清单](docs/PRODUCTION_DEPLOYMENT.md)。
 
 复现安全测试：
 

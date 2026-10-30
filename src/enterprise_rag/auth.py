@@ -7,10 +7,16 @@ import secrets
 import time
 from typing import Any
 
-JWT_SECRET_KEY = os.getenv(
-    "JWT_SECRET_KEY",
-    "dev-only-change-me",
-)
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DEFAULT_JWT_SECRET_KEY = "dev-only-change-me"
+INSECURE_JWT_SECRET_KEYS = {
+    DEFAULT_JWT_SECRET_KEY,
+    "replace_with_a_long_random_secret",
+}
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", DEFAULT_JWT_SECRET_KEY)
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(
     os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
@@ -23,6 +29,24 @@ SCRYPT_KEY_LENGTH = 32
 
 class AuthError(ValueError):
     pass
+
+
+def validate_jwt_secret_config(secret: str | None = None) -> None:
+    app_environment = os.getenv("APP_ENV", "development").strip().lower()
+    if app_environment != "production":
+        return
+
+    configured_secret = secret if secret is not None else JWT_SECRET_KEY
+    if (
+        configured_secret in INSECURE_JWT_SECRET_KEYS
+        or len(configured_secret) < 32
+    ):
+        raise RuntimeError(
+            "生产环境必须配置至少 32 字符且非默认值的 JWT_SECRET_KEY"
+        )
+
+
+validate_jwt_secret_config()
 
 
 def _base64url_encode(value: bytes) -> str:

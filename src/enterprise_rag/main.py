@@ -54,6 +54,7 @@ from enterprise_rag.llm_client import DeepSeekClient
 from enterprise_rag.models import User
 from enterprise_rag.observability import (
     RequestLoggingMiddleware,
+    audit_log,
     estimate_llm_cost,
 )
 from enterprise_rag.observability import (
@@ -61,6 +62,7 @@ from enterprise_rag.observability import (
 )
 from enterprise_rag.permissions import require_knowledge_base_access
 from enterprise_rag.rag import RagResponse, RagService
+from enterprise_rag.rate_limit import enforce_rate_limit, env_int
 from enterprise_rag.reranker import Reranker
 from enterprise_rag.tasks import ingest_document_task
 from enterprise_rag.vector_store import VectorStore
@@ -225,6 +227,13 @@ def chat(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
 ) -> RagResponse:
+    enforce_rate_limit(
+        http_request,
+        bucket="rag-chat",
+        limit=env_int("RATE_LIMIT_CHAT_PER_MINUTE", 30),
+        window_seconds=60,
+        subject=f"user:{user.id}",
+    )
     knowledge_base = require_knowledge_base_access(
         session=session,
         user_id=user.id,
@@ -271,6 +280,13 @@ def agent_chat(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
 ) -> AgentChatResponse:
+    enforce_rate_limit(
+        http_request,
+        bucket="agent-chat",
+        limit=env_int("RATE_LIMIT_AGENT_PER_MINUTE", 10),
+        window_seconds=60,
+        subject=f"user:{user.id}",
+    )
     knowledge_base = require_knowledge_base_access(
         session=session,
         user_id=user.id,
@@ -360,9 +376,17 @@ def agent_chat(
 async def upload_document(
     file: Annotated[UploadFile, File()],
     knowledge_base_id: Annotated[int, Form(gt=0)],
+    http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
 ) -> IngestionJobResponse:
+    enforce_rate_limit(
+        http_request,
+        bucket="document-upload",
+        limit=env_int("RATE_LIMIT_UPLOAD_PER_HOUR", 20),
+        window_seconds=3600,
+        subject=f"user:{user.id}",
+    )
     knowledge_base = require_knowledge_base_access(
         session=session,
         user_id=user.id,
@@ -407,6 +431,18 @@ async def upload_document(
             detail="任务队列暂时不可用",
         ) from exc
 
+    audit_log(
+        event="document",
+        action="upload",
+        outcome="accepted",
+        request_id=http_request.state.request_id,
+        actor_user_id=user.id,
+        resource_type="document",
+        resource_id=document_id,
+        knowledge_base_id=knowledge_base.id,
+        job_id=job.id,
+        filename=filename,
+    )
     return job_response(job)
 
 
@@ -447,9 +483,17 @@ def list_documents(
 def delete_document(
     knowledge_base_id: int,
     document_id: str,
+    http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
 ) -> None:
+    enforce_rate_limit(
+        http_request,
+        bucket="document-delete",
+        limit=env_int("RATE_LIMIT_DELETE_PER_HOUR", 30),
+        window_seconds=3600,
+        subject=f"user:{user.id}",
+    )
     require_knowledge_base_access(
         session=session,
         user_id=user.id,
@@ -477,3 +521,13 @@ def delete_document(
         stored_path.unlink()
 
     delete_document_record(session, record)
+    audit_log(
+        event="document",
+        action="delete",
+        outcome="success",
+        request_id=http_request.state.request_id,
+        actor_user_id=user.id,
+        resource_type="document",
+        resource_id=document_id,
+        knowledge_base_id=knowledge_base_id,
+    )

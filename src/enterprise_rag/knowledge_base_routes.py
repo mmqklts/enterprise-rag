@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,7 +15,9 @@ from enterprise_rag.knowledge_base_service import (
     update_knowledge_base_member_role,
 )
 from enterprise_rag.models import User
+from enterprise_rag.observability import audit_log
 from enterprise_rag.permissions import require_knowledge_base_access
+from enterprise_rag.rate_limit import enforce_rate_limit, env_int
 
 router = APIRouter(
     prefix="/knowledge-bases",
@@ -55,6 +57,7 @@ class KnowledgeBaseMemberRoleUpdateRequest(BaseModel):
 def add_member(
     knowledge_base_id: int,
     request: KnowledgeBaseMemberCreateRequest,
+    http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
 ) -> KnowledgeBaseMemberResponse:
@@ -80,6 +83,17 @@ def add_member(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    audit_log(
+        event="knowledge_base",
+        action="member_add",
+        outcome="success",
+        request_id=http_request.state.request_id,
+        actor_user_id=user.id,
+        resource_type="knowledge_base",
+        resource_id=knowledge_base_id,
+        target_user_id=target_user.id,
+        role=membership.role,
+    )
     return KnowledgeBaseMemberResponse(
         id=membership.id,
         knowledge_base_id=membership.knowledge_base_id,
@@ -91,9 +105,17 @@ def add_member(
 @router.post("", response_model=KnowledgeBaseResponse, status_code=201)
 def create(
     request: KnowledgeBaseCreateRequest,
+    http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
 ) -> KnowledgeBaseResponse:
+    enforce_rate_limit(
+        http_request,
+        bucket="knowledge-base-create",
+        limit=env_int("RATE_LIMIT_KB_CREATE_PER_HOUR", 10),
+        window_seconds=3600,
+        subject=f"user:{user.id}",
+    )
     try:
         knowledge_base = create_knowledge_base(
             session=session,
@@ -103,6 +125,15 @@ def create(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    audit_log(
+        event="knowledge_base",
+        action="create",
+        outcome="success",
+        request_id=http_request.state.request_id,
+        actor_user_id=user.id,
+        resource_type="knowledge_base",
+        resource_id=knowledge_base.id,
+    )
     return KnowledgeBaseResponse(
         id=knowledge_base.id,
         name=knowledge_base.name,
@@ -133,6 +164,7 @@ def update_member_role(
     knowledge_base_id: int,
     user_id: int,
     request: KnowledgeBaseMemberRoleUpdateRequest,
+    http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
 ) -> KnowledgeBaseMemberResponse:
@@ -159,6 +191,17 @@ def update_member_role(
     if target_user is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
+    audit_log(
+        event="knowledge_base",
+        action="member_role_update",
+        outcome="success",
+        request_id=http_request.state.request_id,
+        actor_user_id=user.id,
+        resource_type="knowledge_base",
+        resource_id=knowledge_base_id,
+        target_user_id=target_user.id,
+        role=membership.role,
+    )
     return KnowledgeBaseMemberResponse(
         id=membership.id,
         knowledge_base_id=membership.knowledge_base_id,
@@ -175,6 +218,7 @@ def update_member_role(
 def delete_member(
     knowledge_base_id: int,
     user_id: int,
+    http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
 ) -> None:
@@ -195,3 +239,14 @@ def delete_member(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    audit_log(
+        event="knowledge_base",
+        action="member_remove",
+        outcome="success",
+        request_id=http_request.state.request_id,
+        actor_user_id=user.id,
+        resource_type="knowledge_base",
+        resource_id=knowledge_base_id,
+        target_user_id=user_id,
+    )

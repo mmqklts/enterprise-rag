@@ -7,6 +7,7 @@ from enterprise_rag.auth import (
     create_access_token,
     decode_access_token,
     hash_password,
+    validate_jwt_secret_config,
     verify_password,
 )
 from enterprise_rag.auth_service import (
@@ -39,6 +40,18 @@ def test_password_hashing_and_jwt() -> None:
     header, body, signature = token.split(".")
     with pytest.raises(AuthError):
         decode_access_token(f"{header}.{body}.x{signature[1:]}")
+
+
+def test_production_rejects_insecure_jwt_secret(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+
+    with pytest.raises(RuntimeError):
+        validate_jwt_secret_config("dev-only-change-me")
+
+    with pytest.raises(RuntimeError):
+        validate_jwt_secret_config("too-short")
+
+    validate_jwt_secret_config("x" * 64)
 
 
 def test_register_login_and_default_knowledge_base() -> None:

@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -19,6 +19,8 @@ from enterprise_rag.auth_service import (
 )
 from enterprise_rag.db import get_db
 from enterprise_rag.models import User
+from enterprise_rag.observability import audit_log
+from enterprise_rag.rate_limit import enforce_rate_limit, env_int
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -108,8 +110,15 @@ def _auth_response(
 @router.post("/register", response_model=AuthResponse)
 def register(
     request: RegisterRequest,
+    http_request: Request,
     session: Annotated[Session, Depends(get_db)],
 ) -> AuthResponse:
+    enforce_rate_limit(
+        http_request,
+        bucket="auth-register",
+        limit=env_int("RATE_LIMIT_REGISTER_PER_HOUR", 5),
+        window_seconds=3600,
+    )
     try:
         account = register_user(
             session=session,
@@ -118,16 +127,36 @@ def register(
             password=request.password,
         )
     except UserAlreadyExistsError as exc:
+        audit_log(
+            event="auth",
+            action="register",
+            outcome="denied",
+            request_id=http_request.state.request_id,
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    audit_log(
+        event="auth",
+        action="register",
+        outcome="success",
+        request_id=http_request.state.request_id,
+        actor_user_id=account.user.id,
+    )
     return _auth_response(session, account.user)
 
 
 @router.post("/login", response_model=AuthResponse)
 def login(
     request: LoginRequest,
+    http_request: Request,
     session: Annotated[Session, Depends(get_db)],
 ) -> AuthResponse:
+    enforce_rate_limit(
+        http_request,
+        bucket="auth-login",
+        limit=env_int("RATE_LIMIT_LOGIN_PER_MINUTE", 10),
+        window_seconds=60,
+    )
     try:
         user = authenticate_user(
             session=session,
@@ -135,8 +164,21 @@ def login(
             password=request.password,
         )
     except AuthenticationError as exc:
+        audit_log(
+            event="auth",
+            action="login",
+            outcome="denied",
+            request_id=http_request.state.request_id,
+        )
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
+    audit_log(
+        event="auth",
+        action="login",
+        outcome="success",
+        request_id=http_request.state.request_id,
+        actor_user_id=user.id,
+    )
     return _auth_response(session, user)
 
 

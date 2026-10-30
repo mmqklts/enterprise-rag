@@ -17,6 +17,16 @@ if not logger.handlers:
 
 logger.propagate = False
 
+audit_logger = logging.getLogger("enterprise_rag.audit")
+audit_logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
+
+if not audit_logger.handlers:
+    audit_handler = logging.StreamHandler()
+    audit_handler.setFormatter(logging.Formatter("%(message)s"))
+    audit_logger.addHandler(audit_handler)
+
+audit_logger.propagate = False
+
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -51,6 +61,27 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             2,
         )
         response.headers["X-Request-ID"] = request_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "connect-src 'self'; "
+            "img-src 'self' data:; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+        forwarded_proto = request.headers.get("X-Forwarded-Proto", "")
+        if (
+            request.url.scheme == "https"
+            or forwarded_proto.split(",", maxsplit=1)[0].strip() == "https"
+        ):
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
         logger.info(
             json.dumps(
                 {
@@ -65,6 +96,34 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             )
         )
         return response
+
+
+def audit_log(
+    *,
+    event: str,
+    action: str,
+    outcome: str,
+    request_id: str,
+    actor_user_id: int | None = None,
+    resource_type: str | None = None,
+    resource_id: str | int | None = None,
+    **details: object,
+) -> None:
+    audit_logger.info(
+        json.dumps(
+            {
+                "event": event,
+                "action": action,
+                "outcome": outcome,
+                "request_id": request_id,
+                "actor_user_id": actor_user_id,
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                **details,
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 def estimate_llm_cost(
