@@ -26,6 +26,8 @@
 - Alembic 数据库迁移
 - scrypt 密码哈希与 HS256 JWT 身份认证
 - 基于知识库成员角色的上传与查询权限控制
+- Redis + Celery 异步文档解析任务
+- 文档任务状态查询与失败重试
 - FastAPI 接口和 Web 页面
 
 ## Agent 流程
@@ -69,6 +71,38 @@ docker compose up -d --build
 ```
 
 打开 `http://127.0.0.1:8000/`。
+
+Compose 会同时启动：
+
+```text
+app       FastAPI Web/API
+worker    Celery 文档处理 Worker
+postgres  用户和知识库权限元数据
+redis     Celery Broker 和结果后端
+qdrant    向量数据库
+```
+
+## 异步文档处理
+
+上传接口现在只保存文件并创建任务，立即返回 `202`：
+
+```text
+POST /documents/upload
+GET  /jobs/{job_id}
+```
+
+任务状态：
+
+```text
+pending     等待 Worker
+processing  正在解析、切分和 Embedding
+completed   入库完成
+failed      处理失败
+```
+
+任务记录包含 `attempts`、起止时间、切分策略、chunk 数量、文档 ID 和错误信息。Celery 默认最多重试 2 次，Worker 使用与 App 相同的 PostgreSQL、Qdrant 和模型挂载配置。
+
+Web 页面上传后会轮询 `/jobs/{job_id}`，完成后再提示 chunk 数量。
 
 ## 本地开发
 
@@ -115,7 +149,7 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-当前结果：`40 passed`，Ruff 检查通过。
+当前结果：`42 passed`，Ruff 检查通过。
 
 ## 权限数据模型
 

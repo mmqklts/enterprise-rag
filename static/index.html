@@ -555,6 +555,34 @@
 
     restoreSession();
 
+    async function pollIngestionJob(jobId) {
+      while (true) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        const response = await fetch(`/jobs/${jobId}`, {
+          headers: authHeaders(),
+        });
+        const job = await readResponse(response);
+
+        if (job.status === "completed") {
+          uploadStatus.className = "status";
+          uploadStatus.textContent =
+            `索引完成：${job.filename}，${job.chunk_count} 个 chunk，` +
+            `策略 ${job.chunking_strategy}`;
+          return;
+        }
+
+        if (job.status === "failed") {
+          uploadStatus.className = "status error";
+          uploadStatus.textContent =
+            `索引失败：${job.error_message || "未知错误"}`;
+          return;
+        }
+
+        uploadStatus.textContent =
+          `任务 #${job.id}：${job.status}，尝试次数 ${job.attempts}`;
+      }
+    }
+
     uploadButton.addEventListener("click", async () => {
       const file = fileInput.files[0];
       if (!file) {
@@ -585,7 +613,8 @@
         });
         const data = await readResponse(response);
         uploadStatus.textContent =
-          `索引完成：${data.filename}，${data.page_count} 页，${data.chunk_count} 个 chunk`;
+          `任务 #${data.id} 已提交，后台正在解析和建立索引`;
+        await pollIngestionJob(data.id);
       } catch (error) {
         uploadStatus.className = "status error";
         uploadStatus.textContent = `上传失败：${error.message}`;

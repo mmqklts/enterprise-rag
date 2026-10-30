@@ -4,7 +4,10 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
+    Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -104,3 +107,50 @@ class KnowledgeBaseMember(Base):
         back_populates="members",
     )
     user: Mapped[User] = relationship(back_populates="memberships")
+
+class IngestionJob(Base):
+    __tablename__ = "ingestion_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'processing', 'completed', 'failed')",
+            name="ck_ingestion_jobs_status",
+        ),
+        Index("ix_ingestion_jobs_status_created_at", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        index=True,
+    )
+    created_by: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    document_id: Mapped[str | None] = mapped_column(String(64))
+    filename: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(
+        String(16),
+        server_default="pending",
+    )
+    chunking_strategy: Mapped[str | None] = mapped_column(String(16))
+    chunk_count: Mapped[int] = mapped_column(
+        Integer,
+        server_default="0",
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer,
+        server_default="0",
+    )
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+    )

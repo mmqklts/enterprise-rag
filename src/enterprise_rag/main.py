@@ -20,7 +20,18 @@ from enterprise_rag.bm25_retriever import BM25Retriever
 from enterprise_rag.db import get_db
 from enterprise_rag.embedder import TextEmbedder
 from enterprise_rag.hybrid_retriever import HybridRetriever
-from enterprise_rag.ingestion import DocumentIngestionService, IngestionResult
+from enterprise_rag.ingestion import DocumentIngestionService
+from enterprise_rag.job_routes import (
+    IngestionJobResponse,
+    job_response,
+)
+from enterprise_rag.job_routes import (
+    router as job_router,
+)
+from enterprise_rag.job_service import (
+    create_ingestion_job,
+    mark_job_failed,
+)
 from enterprise_rag.knowledge_base_routes import (
     router as knowledge_base_router,
 )
@@ -29,6 +40,7 @@ from enterprise_rag.models import User
 from enterprise_rag.permissions import require_knowledge_base_access
 from enterprise_rag.rag import RagResponse, RagService
 from enterprise_rag.reranker import Reranker
+from enterprise_rag.tasks import ingest_document_task
 from enterprise_rag.vector_store import VectorStore
 
 load_dotenv()
@@ -88,6 +100,7 @@ ALLOWED_SUFFIXES = {".pdf", ".md", ".markdown", ".txt"}
 app = FastAPI(title="Enterprise Knowledge Agent API")
 app.include_router(auth_router)
 app.include_router(knowledge_base_router)
+app.include_router(job_router)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = PROJECT_ROOT / "static"
 
@@ -257,13 +270,17 @@ def agent_chat(
     )
 
 
-@app.post("/documents/upload", response_model=IngestionResult)
+@app.post(
+    "/documents/upload",
+    response_model=IngestionJobResponse,
+    status_code=202,
+)
 async def upload_document(
     file: Annotated[UploadFile, File()],
     knowledge_base_id: Annotated[int, Form(gt=0)],
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
-) -> IngestionResult:
+) -> IngestionJobResponse:
     knowledge_base = require_knowledge_base_access(
         session=session,
         user_id=user.id,
@@ -290,14 +307,22 @@ async def upload_document(
     destination = UPLOAD_DIR / f"{document_id}{suffix}"
     destination.write_bytes(content)
 
-    try:
-        result = get_ingestion_service().ingest(
-            file_path=destination,
-            document_id=document_id,
-            filename=filename,
-            knowledge_base_id=str(knowledge_base.id),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    job = create_ingestion_job(
+        session=session,
+        knowledge_base_id=knowledge_base.id,
+        created_by=user.id,
+        filename=filename,
+        stored_path=str(destination),
+        document_id=document_id,
+    )
 
-    return result
+    try:
+        ingest_document_task.delay(job.id)
+    except Exception as exc:
+        mark_job_failed(session, job.id, str(exc))
+        raise HTTPException(
+            status_code=503,
+            detail="任务队列暂时不可用",
+        ) from exc
+
+    return job_response(job)
